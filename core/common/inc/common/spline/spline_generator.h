@@ -31,6 +31,7 @@ class SplineGenerator {
    * @param parameterization, the parameterization used to evaluate the spline
    * @param spline, the spline returned (wrap in the general N_DEG spline)
    */
+  // 三次多项式，插值拟合，曲线过采样点
   static ErrorType GetCubicSplineBySampleInterpolation(
       const vec_Vecf<N_DIM>& samples, const std::vector<decimal_t>& para,
       SplineType* spline);
@@ -43,6 +44,7 @@ class SplineGenerator {
    * @param spline, the spline returned (wrap in the general N_DEG spline)
    * @note this may be an expensive function depending on the number of breaks
    */
+  // 五次多项式
   static ErrorType GetQuinticSplineBySampleFitting(
       const vec_Vecf<N_DIM>& samples, const std::vector<decimal_t>& para,
       const Eigen::ArrayXf& breaks, const decimal_t regulator,

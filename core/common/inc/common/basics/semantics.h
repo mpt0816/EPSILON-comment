@@ -340,6 +340,7 @@ struct GridMapMetaInfo {
   void print() const;
 };
 
+// N维栅格地图，模板类，N_DIM是栅格地图的维度，T是数据类型
 /**
  * @brief Occupancy grid map
  *
@@ -429,7 +430,7 @@ class GridMapND {
   /**
    * @brief Get the Value Using Coordinate
    *
-   * @param coord Input coordinate
+   * @param coord Input coordinate，是在栅格地图中的坐标
    * @param val Output value
    * @return ErrorType
    */
@@ -439,7 +440,7 @@ class GridMapND {
   /**
    * @brief Get the Value Using Global Position
    *
-   * @param p_w Input global position
+   * @param p_w Input global position，笛卡尔坐标系下的坐标(定位坐标)
    * @param val Output value
    * @return ErrorType
    */
@@ -522,7 +523,7 @@ class GridMapND {
    * @brief Get the Coordinate Using Global Metric On Single Dimension
    *
    * @param metric Input global 1-dim position
-   * @param i Dimension
+   * @param i Dimension， 维度
    * @param idx Output 1-d coordinate
    * @return ErrorType
    */
@@ -592,14 +593,22 @@ class GridMapND {
    * @return ErrorType
    */
   ErrorType SetDataSize(const std::array<int, N_DIM> &dims_size);
-
+  
+  // 每个维度下网格的大小，整数
   std::array<int, N_DIM> dims_size_;
+  // 每个维度下网格的步长，整数
+  // 所有的维度的步长都是 1.
   std::array<int, N_DIM> dims_step_;
+  // 每个维度下网格的分辨率
   std::array<decimal_t, N_DIM> dims_resolution_;
+  // 每个维度的label，名称
   std::array<std::string, N_DIM> dims_name_;
+  // 栅格地图的原点对应的定位坐标值
   std::array<decimal_t, N_DIM> origin_;
-
+  // 地图的数据大小，data_size_ = data.size();
+  // 等于每个维度下网格数量的乘积
   int data_size_{0};
+  // 地图的数据。
   std::vector<T> data_;
 };
 

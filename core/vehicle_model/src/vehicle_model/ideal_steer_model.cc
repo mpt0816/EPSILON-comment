@@ -95,7 +95,7 @@ void IdealSteerModel::operator()(const InternalState &x, InternalState &dxdt,
   cur_state.angle = x[2];
   cur_state.velocity = x[3];
   cur_state.steer = x[4];
-
+  // 自行车运动学模型
   dxdt[0] = cos(cur_state.angle) * cur_state.velocity;
   dxdt[1] = sin(cur_state.angle) * cur_state.velocity;
   dxdt[2] = tan(cur_state.steer) * cur_state.velocity / wheelbase_len_;

@@ -140,6 +140,7 @@ ErrorType SplineGenerator<N_DEG, N_DIM>::GetQuinticSplineBySampleFitting(
 
   // timer.tic();
   // prepare A
+  // 创建并初始化稀疏矩阵A，预分配足够的内存
   Eigen::SparseMatrix<double, Eigen::RowMajor> A(
       N_DIM * num_samples, N_DIM * num_segments * num_order);
   A.reserve(Eigen::VectorXi::Constant(N_DIM * num_samples, num_order));

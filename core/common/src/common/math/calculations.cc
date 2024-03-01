@@ -1,5 +1,6 @@
 #include "common/math/calculations.h"
 
+// 计算阶乘 n!
 long long fac(int n) {
   if (n == 0) return 1;
   if (n == 1) return 1;
@@ -22,6 +23,7 @@ decimal_t normalize_angle(const decimal_t& theta) {
   return theta_tmp;
 }
 
+// 对二维向量进行旋转
 Vecf<2> rotate_vector_2d(const Vecf<2>& v, const decimal_t angle) {
   return Vecf<2>(v[0] * cos(angle) - v[1] * sin(angle),
                  v[0] * sin(angle) + v[1] * cos(angle));

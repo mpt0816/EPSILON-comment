@@ -18,6 +18,7 @@ namespace common {
  * coeffs are scaled to have straightforward physical
  * meaning, also improve the efficiency when evaluating the derivatives.
  */
+// N阶多项式曲线，有两种系数
 template <int N_DEG>
 class Polynomial {
  public:
@@ -84,7 +85,8 @@ class Polynomial {
     }
     return p;
   }
-
+  
+  // jerk/acc 平方的积分
   inline decimal_t J(decimal_t s, int d) const {
     if (d == 3) {
       // integration of squared jerk
@@ -140,6 +142,7 @@ class Polynomial {
     }
 
     MatNf<6> A_inverse;
+    // 先判断有没有缓存的数据，提升计算速度
     if (!LookUpCache(S, &A_inverse)) {
       A_inverse = GetAInverse(S);
     }

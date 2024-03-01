@@ -16,6 +16,7 @@ ErrorType IntelligentVelocityControl::CalculateDesiredVelocity(
   state.s_front = s_front;
   state.v_front = v_front;
   model.set_state(state);
+  // 这里计算只是让车辆和前车匀速行驶，计算下一个时刻的状态
   model.Step(dt);
   // printf("[DEBUG]s %lf, s_front %lf, v %lf, v_front %lf dt %lf.\n", s,
   // s_front,

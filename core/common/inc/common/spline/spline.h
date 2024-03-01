@@ -8,6 +8,7 @@
 
 namespace common {
 
+// 分段多项式曲线
 template <int N_DEG, int N_DIM>
 class Spline {
  public:
@@ -73,9 +74,10 @@ class Spline {
   ErrorType evaluate(const decimal_t s, int d, Vecf<N_DIM>* ret) const {
     int num_pts = vec_domain_.size();
     if (num_pts < 1) return kIllegalInput;
-
+    // 计算s在哪一段
     auto it = std::lower_bound(vec_domain_.begin(), vec_domain_.end(), s);
     int idx = std::max(static_cast<int>(it - vec_domain_.begin()) - 1, 0);
+    // 每段多项式曲线的起点s=0
     decimal_t h = s - vec_domain_[idx];
 
     if (s < vec_domain_[0]) {

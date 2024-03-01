@@ -8,6 +8,7 @@
 namespace common {
 class Lane {
  public:
+  // LaneDegree = 5， LaneDim = 2
   typedef Spline<LaneDegree, LaneDim> SplineType;
   // typedef SplineGenerator<LaneDegree, LaneDim> SplineGeneratorType;
 

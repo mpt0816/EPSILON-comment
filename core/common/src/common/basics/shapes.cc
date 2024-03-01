@@ -53,6 +53,7 @@ void Polygon::print() const {
   printf(" -- num of pts: %d", (int)points.size());
 }
 
+// 分离轴定理
 bool ShapeUtils::CheckIfOrientedBoundingBoxIntersect(
     const OrientedBoundingBox2D& obb_a, const OrientedBoundingBox2D& obb_b) {
   vec_E<Vecf<2>> vertices_a, vertices_b;

@@ -17,11 +17,11 @@ ErrorType ConfigLoader::ParseAgentConfig(AgentConfigInfo *p_agent_config) {
     Json agent = agent_config_json["info"][i];
     if (agent["id"].get<int>() != ego_id_) continue;
     p_agent_config->obstacle_map_meta_info = common::GridMapMetaInfo(
-        agent["obstacle_map_meta_info"]["width"].get<double>(),
-        agent["obstacle_map_meta_info"]["height"].get<double>(),
-        agent["obstacle_map_meta_info"]["resolution"].get<double>());
+        agent["obstacle_map_meta_info"]["width"].get<double>(),       // 1000
+        agent["obstacle_map_meta_info"]["height"].get<double>(),      // 1000
+        agent["obstacle_map_meta_info"]["resolution"].get<double>()); // 0.2
     p_agent_config->surrounding_search_radius =
-        agent["surrounding_search_radius"].get<double>();
+        agent["surrounding_search_radius"].get<double>();  // 150.0
     p_agent_config->enable_openloop_prediction =
         agent["enable_openloop_prediction"].get<bool>();
     if (agent.count("enable_tracking_noise")) {

@@ -17,6 +17,7 @@ IntelligentDriverModel::IntelligentDriverModel(const Param &parm)
 IntelligentDriverModel::~IntelligentDriverModel() {}
 
 void IntelligentDriverModel::Step(double dt) {
+  // 使用Boost库计算积分，纵向运动学
   odeint::integrate(boost::ref(*this), internal_state_, 0.0, dt, dt);
   // Linear(internal_state_, dt, &internal_state_);
 

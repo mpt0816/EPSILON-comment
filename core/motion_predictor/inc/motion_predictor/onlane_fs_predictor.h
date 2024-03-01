@@ -26,6 +26,7 @@ class OnLaneFsPredictor {
     pred_states->clear();
     int num_step = std::round(t_pred / t_step);
     State desired_state;
+    // 将车辆的当前速度设置为期望速度
     decimal_t desired_vel = vehicle.state().velocity;
     planning::OnLaneForwardSimulation::Param sim_param;
     sim_param.idm_param.kDesiredVelocity = desired_vel;
@@ -34,12 +35,14 @@ class OnLaneFsPredictor {
     common::StateTransformer stf = common::StateTransformer(lane);
     for (int i = 0; i < num_step; ++i) {
       if (lane.IsValid()) {
+        // 没有设置前车信息
         if (planning::OnLaneForwardSimulation::PropagateOnce(
                 stf, v_in, common::Vehicle(), t_step, sim_param,
                 &desired_state) != kSuccess) {
           return kWrongStatus;
         }
       } else {
+        // 没有车道信息，使用匀速模型
         if (planning::OnLaneForwardSimulation::PropagateOnce(
                 desired_vel, v_in, t_step,
                 planning::OnLaneForwardSimulation::Param(),

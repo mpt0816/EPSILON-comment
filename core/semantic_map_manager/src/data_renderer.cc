@@ -34,11 +34,12 @@ ErrorType DataRenderer::Render(const double &time_stamp,
   time_stamp_ = time_stamp;
   GetEgoVehicle(vehicle_set);  // ~ Must update ego vehicle first
   GetObstacleMap(obstacle_set);
-  GetWholeLaneNet(lane_net);
-  GetSurroundingLaneNet(lane_net);
-  GetSurroundingVehicles(vehicle_set);
+  GetWholeLaneNet(lane_net);   // 所有的车道
+  GetSurroundingLaneNet(lane_net);  // 通过 kdTree，在主车搜索范围内的车道以及车道线上的点
+  GetSurroundingVehicles(vehicle_set);  // 主车搜索范围内的车辆
 
   if (p_semantic_map_manager_->agent_config_info().enable_tracking_noise) {
+    // 对周围车辆增加位置、航向扰动
     InjectObservationNoise();
     p_semantic_map_manager_->set_uncertain_vehicle_ids(uncertain_vehicle_ids_);
   }
@@ -62,6 +63,7 @@ ErrorType DataRenderer::InjectObservationNoise() {
   if (cnt_random_ == 10) {
     uncertain_vehicle_ids_.clear();
     const decimal_t angle_noise_std = 0.22;
+    // 正态分布
     std::normal_distribution<double> lat_pos_dist(0.0, 0.2);
     std::normal_distribution<double> long_pos_dist(0.0, 0.7);
     std::normal_distribution<double> angle_dist(0.0, angle_noise_std);
@@ -71,9 +73,10 @@ ErrorType DataRenderer::InjectObservationNoise() {
     for (const auto &v : surrounding_vehicles_.vehicles) {
       surrounding_ids.push_back(v.first);
     }
+    // 使周围车辆在vector中随机排列
     std::shuffle(surrounding_ids.begin(), surrounding_ids.end(),
                  random_engine_);
-
+    // 只对三个周围车辆加上噪声
     std::vector<int> sampled_ids;
     for (int i = 0; i < 3 && i < surrounding_ids.size(); i++) {
       sampled_ids.push_back(surrounding_ids[i]);
@@ -100,7 +103,7 @@ ErrorType DataRenderer::InjectObservationNoise() {
       original_state.vec_position = augmented_position;
       original_state.angle =
           normalize_angle(original_state.angle + angle_noise);
-
+      // 增加的横向扰动 > 18.9°时，认为是 uncertain
       if (fabs(angle_noise) > 1.5 * angle_noise_std &&
           v.second.type().compare("brokencar") != 0)
         uncertain_vehicle_ids_.push_back(v.first);
@@ -124,7 +127,7 @@ ErrorType DataRenderer::GetObstacleMap(
   // ~ NOTICE:
   // ~ Origin of OccupancyGrid is at left-bottom corner,
   // ~ when x -> right, y -> up
-
+  // 以主车为中心建立 map
   decimal_t x = ego_state_.vec_position(0) - obstacle_map_info_.h_metric / 2.0;
   decimal_t y = ego_state_.vec_position(1) - obstacle_map_info_.w_metric / 2.0;
   // Aligning to global coordinate to improve consistency
@@ -135,7 +138,8 @@ ErrorType DataRenderer::GetObstacleMap(
   p_obstacle_grid_->fill_data(GridMap2D::UNKNOWN);
   std::array<decimal_t, 2> origin = {{x_r, y_r}};
   p_obstacle_grid_->set_origin(origin);
-
+  
+  // 使用 opencv 库建立栅格地图，将opencv数据和栅格地图数据关联起来
   cv::Mat grid_mat =
       cv::Mat(obstacle_map_info_.height, obstacle_map_info_.width,
               CV_MAKETYPE(cv::DataType<ObstacleMapType>::type, 1),
@@ -257,12 +261,12 @@ ErrorType DataRenderer::GetSurroundingLaneNet(const common::LaneNet &lane_net) {
   // const size_t nMatches =
   kdtree_lane_net_->radiusSearch(&query_pt[0], search_radius, ret_matches,
                                  params);
-
-  std::set<size_t> matched_lane_id_set;
+  
+  std::set<size_t> matched_lane_id_set; // 主车周围车道 id
   for (const auto e : ret_matches) {
     matched_lane_id_set.insert(lane_net_pts_.pts[e.first].values[0]);
   }
-
+  // 主车周围的车道的id和主车搜索范围内的车道线的点
   for (const auto id : matched_lane_id_set) {
     surrounding_lane_net_.lane_set.insert(
         std::pair<int, common::LaneRaw>(id, lane_net.lane_set.at(id)));

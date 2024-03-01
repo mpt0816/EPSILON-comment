@@ -15,6 +15,7 @@ void EudmManager::Init(const std::string& config_path,
   bp_.Init(config_path);
   bp_.set_map_interface(&map_adapter_);
   work_rate_ = work_rate;
+  // 通过配置参数，设置是否允许主动变道
   if (bp_.cfg().function().active_lc_enable()) {
     LOG(ERROR) << "[HMI]HMI enabled with active lane change ON.";
   } else {
@@ -33,6 +34,7 @@ decimal_t EudmManager::GetNearestFutureDecisionPoint(const decimal_t& stamp,
 }
 
 bool EudmManager::IsTriggerAppropriate(const LateralBehavior& lat) {
+// 默认换道时机永远可以
 #if 1
   return true;
 #endif
@@ -80,16 +82,18 @@ ErrorType EudmManager::Prepare(
 
   DcpAction desired_action;
   if (!GetReplanDesiredAction(stamp, &desired_action)) {
+    // 如果没有找到上一帧的决策在当前帧中仍需要执行的决策，
+    // 则使用 本车道匀速行驶的决策
     desired_action.lat = DcpLatAction::kLaneKeeping;
     desired_action.lon = DcpLonAction::kMaintain;
     decimal_t fdp_stamp = GetNearestFutureDecisionPoint(stamp, 0.0);
     desired_action.t = fdp_stamp - stamp;
   }
-
+  // 计算本车道id， SemanticMapManager 是不是可以将本车到id存储起来，不用每次都计算一次？
   if (map_adapter_.map()->GetEgoNearestLaneId(&ego_lane_id_) != kSuccess) {
     return kWrongStatus;
   }
-
+  // 换道状态跳转
   UpdateLaneChangeContextByTask(stamp, task);
   if (lc_context_.completed) {
     desired_action.lat = DcpLatAction::kLaneKeeping;
@@ -345,7 +349,7 @@ ErrorType EudmManager::GenerateLaneChangeProposal(
 
   return kSuccess;
 }
-
+// 根据用户输入的换道指令进行换道状态跳转
 void EudmManager::UpdateLaneChangeContextByTask(
     const decimal_t stamp, const planning::eudm::Task& task) {
   if (!last_task_.is_under_ctrl && task.is_under_ctrl) {
@@ -377,10 +381,11 @@ void EudmManager::UpdateLaneChangeContextByTask(
                  << task.lc_info.forbid_lane_change_right;
   }
 
-  if (task.is_under_ctrl) {
-    if (!lc_context_.completed) {
+  if (task.is_under_ctrl) {  // 自动驾驶模式下
+    if (!lc_context_.completed) { // 换道进行中
       if (!map_adapter_.IsLaneConsistent(lc_context_.ego_lane_id,
                                          ego_lane_id_)) {
+        // 前后帧的ego lane id 发生变化，认为换道完成                                  
         // in progress lane change and lane id change
         LOG(WARNING) << "[HMI]lane change completed due to different lane id "
                      << lc_context_.ego_lane_id << " to " << ego_lane_id_
@@ -388,9 +393,10 @@ void EudmManager::UpdateLaneChangeContextByTask(
         lc_context_.completed = true;
         lc_context_.trigger_when_appropriate = false;
         last_lc_proposal_.trigger_time = stamp;
-      } else {
+      } else { // 换道进行中，还没有进入目标车道
         if (task.user_perferred_behavior != 1 &&
             last_task_.user_perferred_behavior == 1) {
+          // 向左的换道指令取消 
           // receive a lane cancel trigger
           LOG(WARNING) << "[HMI]lane change cancel by stick "
                        << last_task_.user_perferred_behavior << " to "
@@ -400,6 +406,7 @@ void EudmManager::UpdateLaneChangeContextByTask(
           last_lc_proposal_.trigger_time = stamp;
         } else if (task.user_perferred_behavior != -1 &&
                    last_task_.user_perferred_behavior == -1) {
+          // 向右的换道指令取消
           // receive a lane cancel trigger
           LOG(WARNING) << "[HMI]lane change cancel by stick "
                        << last_task_.user_perferred_behavior << " to "
@@ -408,6 +415,7 @@ void EudmManager::UpdateLaneChangeContextByTask(
           lc_context_.trigger_when_appropriate = false;
           last_lc_proposal_.trigger_time = stamp;
         } else if (lc_context_.type == LaneChangeTriggerType::kActive) {
+          // 换道类型是 自动变道，非拨杆变道
           if (bp_.cfg()
                   .function()
                   .active_lc()
@@ -417,6 +425,7 @@ void EudmManager::UpdateLaneChangeContextByTask(
                               .function()
                               .active_lc()
                               .auto_cancel_if_late_for_seconds()) {
+            // 换道超时，取消换道，配置参数为 15s
             if (lc_context_.lat == LateralBehavior::kLaneChangeLeft) {
               LOG(WARNING)
                   << "[HMI]ACTIVE [Left] auto cancel due to outdated for "
@@ -437,6 +446,7 @@ void EudmManager::UpdateLaneChangeContextByTask(
                          .enable_auto_cancel_by_forbid_signal() &&
                      task.lc_info.forbid_lane_change_left &&
                      lc_context_.lat == LateralBehavior::kLaneChangeLeft) {
+            // 向左变道中，调试工具输入信号为禁止向左变道，取消变道
             LOG(WARNING) << "[HMI]ACTIVE [Left] canceled due to forbidden "
                             "signal. Cd alc.";
             lc_context_.completed = true;
@@ -448,6 +458,7 @@ void EudmManager::UpdateLaneChangeContextByTask(
                          .enable_auto_cancel_by_forbid_signal() &&
                      task.lc_info.forbid_lane_change_right &&
                      lc_context_.lat == LateralBehavior::kLaneChangeRight) {
+            // 向右变道中，调试工具输入信号为禁止向右变道，取消变道
             LOG(WARNING)
                 << "[HMI]ACTIVE [Right] canceled due to forbidden signal. "
                    "Cd alc.";
@@ -460,7 +471,8 @@ void EudmManager::UpdateLaneChangeContextByTask(
                          .enable_auto_canbel_by_stick_signal() &&
                      lc_context_.lat == LateralBehavior::kLaneChangeLeft &&
                      (task.user_perferred_behavior == 1 ||
-                      task.user_perferred_behavior == 11)) {
+                      task.user_perferred_behavior == 11)) {  //  EudmPlannerServer::JoyCallback 中不会有11
+            // 向左变道中，调试工具指令改为向右变道，取消变道
             LOG(WARNING)
                 << "[HMI]ACTIVE [left] canceled due to human opposite signal. "
                    "Cd alc.";
@@ -473,7 +485,8 @@ void EudmManager::UpdateLaneChangeContextByTask(
                          .enable_auto_canbel_by_stick_signal() &&
                      lc_context_.lat == LateralBehavior::kLaneChangeRight &&
                      (task.user_perferred_behavior == -1 ||
-                      task.user_perferred_behavior == 12)) {
+                      task.user_perferred_behavior == 12)) {  //  EudmPlannerServer::JoyCallback 中不会有12
+            // 向右变道中，调试工具指令改为向左变道，取消变道
             LOG(WARNING) << "[HMI]ACTIVE canceled due to human active signal. "
                             "Cd alc.";
             lc_context_.completed = true;
@@ -482,9 +495,10 @@ void EudmManager::UpdateLaneChangeContextByTask(
           }
         }
       }
-    } else {
+    } else { // 换道完成，接受新的变道指令，首先响应用户指令
       // lane change completed state: welcome new activations
       // handle user requirement first
+      // 清除指令缓存
       if (task.user_perferred_behavior != 1 &&
           last_task_.user_perferred_behavior == 1 &&
           lc_context_.trigger_when_appropriate) {
@@ -504,6 +518,7 @@ void EudmManager::UpdateLaneChangeContextByTask(
         // receive a lane change right trigger and previous action has been
         // completed
         if (task.lc_info.forbid_lane_change_right) {
+        // 收到向右换道指令，但是当前指令禁止向右换道，设置在合适时间触发换道
           LOG(WARNING)
               << "[HMI]cannot stick [Right]. Will trigger when appropriate.";
           lc_context_.trigger_when_appropriate = true;
@@ -542,6 +557,7 @@ void EudmManager::UpdateLaneChangeContextByTask(
       } else if (task.user_perferred_behavior == -1 &&
                  last_task_.user_perferred_behavior != -1) {
         if (task.lc_info.forbid_lane_change_left) {
+          // 收到向左换道指令，但是当前指令禁止向左换道，设置在合适时间触发换道
           LOG(WARNING)
               << "[HMI]cannot stick [Left]. Will trigger when appropriate.";
           lc_context_.trigger_when_appropriate = true;
@@ -578,6 +594,7 @@ void EudmManager::UpdateLaneChangeContextByTask(
           }
         }
       } else if (lc_context_.trigger_when_appropriate) {
+      // 允许在合适时机触发换道，根据之前的换道指令，判断换道时机进行换道
         if (lc_context_.lat == LateralBehavior::kLaneChangeLeft &&
             !task.lc_info.forbid_lane_change_left) {
           if (IsTriggerAppropriate(LateralBehavior::kLaneChangeLeft)) {
@@ -702,7 +719,7 @@ void EudmManager::ConstructBehavior(common::SemanticBehavior* behavior) {
   behavior->state = last_snapshot_.plan_state;
   behavior->ref_lane = last_snapshot_.ref_lane;
 }
-
+// 根据车前一段车道线的曲率限速和用户设置速度，计算参考速度
 ErrorType EudmManager::EvaluateReferenceVelocity(
     const planning::eudm::Task& task, decimal_t* ref_vel) {
   if (!last_snapshot_.ref_lane.IsValid()) {
@@ -878,6 +895,7 @@ ErrorType EudmManager::Run(
   return kSuccess;
 }
 
+// 上一帧得到的决策序列中，在当前时刻正在执行的决策
 bool EudmManager::GetReplanDesiredAction(const decimal_t current_time,
                                          DcpAction* desired_action) {
   if (!context_.is_valid) return false;

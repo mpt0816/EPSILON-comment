@@ -85,6 +85,7 @@ ErrorType Lane::GetNormalVectorByArcLength(const decimal_t arc_length,
   }
 
   Vecf<LaneDim> tangent_vector = vel / vel.norm();
+  // 为什么旋转90°
   *normal_vector = rotate_vector_2d(tangent_vector, M_PI / 2.0);
   return kSuccess;
 }
@@ -151,6 +152,7 @@ ErrorType Lane::GetArcLengthByVecPosition(const Vecf<LaneDim>& vec_position,
       } else {
         assert(false);
       }
+      // 这里 for 循环不会直接退出？ 是不是有 bug ？
       break;
     }
     step *= 0.5;

@@ -175,6 +175,7 @@ class OnLaneForwardSimulation {
 
     decimal_t steer, velocity;
     if (!steer_calculation_failed) {
+      // 预瞄距离
       decimal_t approx_lookahead_dist =
           std::min(std::max(param.steer_control_min_lookahead_dist,
                             current_state.velocity * param.steer_control_gain),
@@ -185,9 +186,10 @@ class OnLaneForwardSimulation {
         steer_calculation_failed = true;
       }
     }
-
+    // sl投影速度<0 或者 pure pursuit计算失败，保持上一个状态的转向
     steer = steer_calculation_failed ? current_state.steer : steer;
     decimal_t sim_vel = param.idm_param.kDesiredVelocity;
+    // 转向计算失败，则停车，设置期望速度为0
     if (param.auto_decelerate_if_lat_failed && steer_calculation_failed) {
       sim_vel = 0.0;
     }
@@ -199,6 +201,7 @@ class OnLaneForwardSimulation {
         stf.GetFrenetStateFromState(leading_vehicle.state(), &leading_fs) !=
             kSuccess) {
       // ~ Without leading vehicle
+      // 没有前车情况
       CalcualateVelocityUsingIdm(current_state.velocity, dt, sim_param,
                                  &velocity);
     } else {
@@ -359,6 +362,7 @@ class OnLaneForwardSimulation {
         stf.GetFrenetStateFromState(leading_vehicle.state(), &leading_fs) !=
             kSuccess) {
       // ~ Without leading vehicle
+      // 匀速模型
       CalcualateVelocityUsingIdm(current_state.velocity, dt, sim_param,
                                  &velocity);
     } else {
@@ -411,16 +415,20 @@ class OnLaneForwardSimulation {
 
     Vec2f fs_pt1, fs_pt2;
     std::vector<decimal_t> s_vec;
+    // 后悬
     if (kSuccess == stf.GetFrenetPointFromPoint(leading_pts[0], &fs_pt1)) {
       s_vec.push_back(fs_pt1(0));
     }
+    // 前悬
     if (kSuccess == stf.GetFrenetPointFromPoint(leading_pts[1], &fs_pt2)) {
       s_vec.push_back(fs_pt2(0));
     }
+    // 后轴中心
     s_vec.push_back(leading_fs.vec_s(0));
     decimal_t s_nearest_vtx = *(std::min_element(s_vec.begin(), s_vec.end()));
-
+    // 后轴中心 到 （前悬 后悬  后轴中心）_min 的距离
     decimal_t len_rb2r = fabs(leading_fs.vec_s(0) - s_nearest_vtx);
+    // 为啥这么做？
     // ego rear-axle to front bumper + leading rear bumper to rear-axle
     *eqv_vehicle_len = ego_vehicle.param().length() / 2.0 +
                        ego_vehicle.param().d_cr() + len_rb2r;
@@ -435,6 +443,7 @@ class OnLaneForwardSimulation {
                                    const Vec2f& lookahead_offset,
                                    decimal_t* steer) {
     common::FrenetState dest_fs;
+    // 预瞄点的Ferent值
     dest_fs.Load(Vecf<3>(lookahead_offset(0) + current_fs.vec_s[0], 0.0, 0.0),
                  Vecf<3>(lookahead_offset(1), 0.0, 0.0),
                  common::FrenetState::kInitWithDs);
@@ -443,11 +452,12 @@ class OnLaneForwardSimulation {
     if (stf.GetStateFromFrenetState(dest_fs, &dest_state) != kSuccess) {
       return kWrongStatus;
     }
-
+    // 两点间距离
     decimal_t look_ahead_dist =
         (dest_state.vec_position - current_state.vec_position).norm();
     decimal_t cur_to_dest_angle =
         vec2d_to_angle(dest_state.vec_position - current_state.vec_position);
+    // current_state.angle: 主车航向角    
     decimal_t angle_diff =
         normalize_angle(cur_to_dest_angle - current_state.angle);
     control::PurePursuitControl::CalculateDesiredSteer(
@@ -464,6 +474,8 @@ class OnLaneForwardSimulation {
     if (leading_vel < 0) {
       leading_vel_fin = 0;
     }
+    // 不能使用曲线坐标系下速度，当在大曲率道路时，曲线坐标系下的速度会远大于车辆速度
+    // bug，为啥不改呢？
     // ~ note that we cannot use frenet state velocity for idm model, since the
     // ~ velocity in the frenet state may be larger than body velocity if the
     // ~ vehicle is in a highly curvy road (ref to the state transformer) which
@@ -474,6 +486,7 @@ class OnLaneForwardSimulation {
   }
 
   // ~ Using virtual leading vehicle
+  // 并不是IDM，就是匀速
   static ErrorType CalcualateVelocityUsingIdm(const decimal_t& current_vel,
                                               const decimal_t& dt,
                                               const Param& param,

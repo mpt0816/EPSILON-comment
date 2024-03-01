@@ -41,7 +41,8 @@ int SemanticMapUpdateCallback(
 int main(int argc, char** argv) {
   ros::init(argc, argv, "~");
   ros::NodeHandle nh("~");
-
+  
+  // 从ros参数空间获取配置参数
   int ego_id;
   if (!nh.getParam("ego_id", ego_id)) {
     ROS_ERROR("Failed to get param %d", ego_id);
@@ -66,7 +67,8 @@ int main(int argc, char** argv) {
               ssc_config_path.c_str());
     assert(false);
   }
-
+  
+  // 语义地图进行载参
   semantic_map_manager::SemanticMapManager semantic_map_manager(
       ego_id, agent_config_path);
   semantic_map_manager::RosAdapter smm_ros_adapter(nh, &semantic_map_manager);
@@ -85,7 +87,8 @@ int main(int argc, char** argv) {
   p_bp_server_->Init(bp_config_path);
   p_ssc_server_->Init(ssc_config_path);
   smm_ros_adapter.Init();
-
+  
+  // 决策和轨迹规划分别是两个独立的线程，开启线程
   p_bp_server_->Start();
   p_ssc_server_->Start();
 

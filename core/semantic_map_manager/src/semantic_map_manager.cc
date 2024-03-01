@@ -46,6 +46,7 @@ ErrorType SemanticMapManager::UpdateSemanticMap(
   UpdateSemanticLaneSet();
 
   // * update key lanes and its LUT
+  // LUT： Look Up Table ??
   if (agent_config_info_.enable_fast_lane_lut) {
     UpdateLocalLanesAndFastLut();
   }
@@ -58,6 +59,7 @@ ErrorType SemanticMapManager::UpdateSemanticMap(
 
   // * openloop prediction for all semantic vehicles
   if (agent_config_info_.enable_openloop_prediction) {
+    // IDM模式中没有考虑前车，纵向匀速
     OpenloopTrajectoryPrediction();
   }
 
@@ -106,13 +108,14 @@ ErrorType SemanticMapManager::NaiveRuleBasedLateralBehaviorPrediction(
     return kWrongStatus;
   }
 
-  decimal_t prob_lcl = 0.0;
-  decimal_t prob_lcr = 0.0;
-  decimal_t prob_lk = 0.0;
+  decimal_t prob_lcl = 0.0;  // 向左换道概率
+  decimal_t prob_lcr = 0.0;  // 向右换道概率
+  decimal_t prob_lk = 0.0;   // 车道保持概率
 
   const decimal_t lat_distance_threshold = 0.4;
   const decimal_t lat_vel_threshold = 0.35;
   if (use_right_hand_axis_) {
+    // 车辆向左偏移位置和速度大于设定阈值，且左侧有车道允许换道，直接设置左换道概率为1
     if (fs.vec_dt[0] > lat_distance_threshold &&
         fs.vec_dt[1] > lat_vel_threshold &&
         nearest_lane.l_lane_id != kInvalidLaneId &&
@@ -760,6 +763,7 @@ ErrorType SemanticMapManager::GetNearestLaneIdUsingState(
     const Vec3f &state, const std::vector<int> &navi_path, int *id,
     decimal_t *distance, decimal_t *arc_len) const {
   // tuple: dist, arc_len, angle_diff, id
+  // std::set是有序容器，使用 std::tuple 中的第一个元素进行排序
   std::set<std::tuple<decimal_t, decimal_t, decimal_t, int>> lanes_in_dist;
   if (GetDistanceToLanesUsing3DofState(state, &lanes_in_dist) != kSuccess) {
     return kWrongStatus;
@@ -989,7 +993,7 @@ ErrorType SemanticMapManager::UpdateKeyVehicles() {
       auto it = key_lane_ids.find(v_lane_id);
       if (it != key_lane_ids.end()) {
         decimal_t len_offset = it->second;
-        decimal_t dist = len_offset + v.second.arc_len_onlane;
+        decimal_t dist = len_offset + v.second.arc_len_onlane;  // 和主车的纵向距离
         // * Front
         if (dist >= 0 && fabs(dist) < front_range) {
           int v_id = v.first;
