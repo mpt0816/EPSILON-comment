@@ -72,6 +72,7 @@ ErrorType RoutePlanner::GetNaviPathByRandomExpansion() {
     int n_child = static_cast<int>(child_ids.size());
     // ~ we should break here, otherwise there may be divided by zero
     if (n_child == 0) break;
+    // 在后序车道中随机选择一条车道
     int rand_num = std::floor(rd_gen_() / (rd_gen_.max() / n_child));
     int rand_id = child_ids[rand_num];
     dist_acc += lane_net_.lane_set.at(rand_id).length;

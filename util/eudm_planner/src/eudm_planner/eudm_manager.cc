@@ -6,13 +6,15 @@ namespace planning {
 
 void EudmManager::Init(const std::string& config_path,
                        const decimal_t work_rate) {
+  // glog文件名称和位置
   google::InitGoogleLogging("eudm");
   google::SetLogDestination(google::GLOG_INFO, "~/.eudm_log/");
   google::SetLogDestination(google::GLOG_WARNING, "~/.eudm_log/");
   google::SetLogDestination(google::GLOG_ERROR, "~/.eudm_log/");
   google::SetLogDestination(google::GLOG_FATAL, "~/.eudm_log/");
-
+  // EUDM Planner初始化：加载 DCP Tree、simulation、RSS 配置参数
   bp_.Init(config_path);
+  // 绑定 EUDM Planner 使用的 语义地图 的指针，当决策开始后，这个指针会被更新指向最新的 语义地图 地址 
   bp_.set_map_interface(&map_adapter_);
   work_rate_ = work_rate;
   // 通过配置参数，设置是否允许主动变道
@@ -30,9 +32,13 @@ decimal_t EudmManager::GetNearestFutureDecisionPoint(const decimal_t& stamp,
   decimal_t past_decision_point =
       std::floor((stamp + delta) / bp_.cfg().sim().duration().layer()) *
       bp_.cfg().sim().duration().layer();
+  // 将时间戳安装 DTP Tree的action持续作用时间圆整
+  // 希望后续被选中的action的持续时间为 设置
   return past_decision_point + bp_.cfg().sim().duration().layer();
 }
 
+// 从上一帧得到所有动作序列中找到可以期望行为匹配的结果
+// 如果可以找到，说明期望的行为是可以执行的
 bool EudmManager::IsTriggerAppropriate(const LateralBehavior& lat) {
 // 默认换道时机永远可以
 #if 1
@@ -79,26 +85,33 @@ ErrorType EudmManager::Prepare(
     const std::shared_ptr<semantic_map_manager::SemanticMapManager>& map_ptr,
     const planning::eudm::Task& task) {
   map_adapter_.set_map(map_ptr);
-
+  
+  // 根据时间戳，从上一帧决策中选中当前时间下的action，作为当前帧的根节点
   DcpAction desired_action;
   if (!GetReplanDesiredAction(stamp, &desired_action)) {
-    // 如果没有找到上一帧的决策在当前帧中仍需要执行的决策，
-    // 则使用 本车道匀速行驶的决策
+    // 如果没有找到上一帧的决策在当前帧中仍需要继续执行的决策，
+    // 则使用 本车道匀速行驶 的决策
     desired_action.lat = DcpLatAction::kLaneKeeping;
     desired_action.lon = DcpLonAction::kMaintain;
+    // 计算 DCP tree 的根节点的持续作用时间
+    // 经过圆整，根节点的持续时间近似为配置参数的每个action的持续时间
+    // 近似是因为：stamp 是按照 EUDM Planner 的频率圆整的
     decimal_t fdp_stamp = GetNearestFutureDecisionPoint(stamp, 0.0);
     desired_action.t = fdp_stamp - stamp;
   }
-  // 计算本车道id， SemanticMapManager 是不是可以将本车到id存储起来，不用每次都计算一次？
+  // 计算本车道id
+  // SemanticMapManager 是不是可以将本车到id存储起来，不用每次都计算一次？
   if (map_adapter_.map()->GetEgoNearestLaneId(&ego_lane_id_) != kSuccess) {
     return kWrongStatus;
   }
-  // 换道状态跳转
+  // 根据用户指令lc_context_, 会更新到EUDM的cost目标中
   UpdateLaneChangeContextByTask(stamp, task);
   if (lc_context_.completed) {
+    // 换道完成，重置根节点为 LaneKeeping
     desired_action.lat = DcpLatAction::kLaneKeeping;
   }
 
+  // 打印 上一帧 的 动作序列
   {
     std::ostringstream line_info;
     line_info << "[Eudm][Manager]Replan context <valid, stamp, seq>:<"
@@ -114,6 +127,7 @@ ErrorType EudmManager::Prepare(
     line_info << ">";
     LOG(WARNING) << line_info.str();
   }
+  // 打印 根据用户指令得到期望换道行为
   {
     std::ostringstream line_info;
     line_info << "[Eudm][Manager]LC context <completed, twa, tt, dt, l_id, "
@@ -127,7 +141,7 @@ ErrorType EudmManager::Prepare(
               << "," << static_cast<int>(lc_context_.type) << ">";
     LOG(WARNING) << line_info.str();
   }
-
+  // 更新DCP Tree：根节点，并生成 Policy Tree
   bp_.UpdateDcpTree(desired_action);
   decimal_t ref_vel;
   EvaluateReferenceVelocity(task, &ref_vel);
@@ -350,9 +364,11 @@ ErrorType EudmManager::GenerateLaneChangeProposal(
   return kSuccess;
 }
 // 根据用户输入的换道指令进行换道状态跳转
+// 先不管对用户输入换道指令的处理
 void EudmManager::UpdateLaneChangeContextByTask(
     const decimal_t stamp, const planning::eudm::Task& task) {
   if (!last_task_.is_under_ctrl && task.is_under_ctrl) {
+    // 从人工驾驶切换到自动驾驶
     LOG(WARNING) << "[HMI]Autonomous mode activated!";
     lc_context_.completed = true;
     lc_context_.trigger_when_appropriate = false;
@@ -360,6 +376,7 @@ void EudmManager::UpdateLaneChangeContextByTask(
   }
 
   if (last_task_.is_under_ctrl && !task.is_under_ctrl) {
+    // 退出自动驾驶
     LOG(WARNING) << "[HMI]Autonomous mode deactivated!";
     lc_context_.completed = true;
     lc_context_.trigger_when_appropriate = false;
@@ -367,6 +384,7 @@ void EudmManager::UpdateLaneChangeContextByTask(
   }
 
   if (task.user_perferred_behavior != last_task_.user_perferred_behavior) {
+    // 用户期望换道行为变化
     LOG(WARNING) << "[HMI]stick state change from "
                  << last_task_.user_perferred_behavior << " to "
                  << task.user_perferred_behavior;
@@ -376,16 +394,19 @@ void EudmManager::UpdateLaneChangeContextByTask(
        last_task_.lc_info.forbid_lane_change_left) ||
       (task.lc_info.forbid_lane_change_right !=
        last_task_.lc_info.forbid_lane_change_right)) {
+    // 仿真设置的左右侧是否可以变道的状态发生变化
     LOG(WARNING) << "[HMI]lane change forbid signal [left] "
                  << task.lc_info.forbid_lane_change_left << " [right] "
                  << task.lc_info.forbid_lane_change_right;
   }
 
-  if (task.is_under_ctrl) {  // 自动驾驶模式下
+  if (task.is_under_ctrl) {  
+    // 自动驾驶模式下
     if (!lc_context_.completed) { // 换道进行中
+      // 判断当前帧所在车道和上一帧所在车道是否相同
       if (!map_adapter_.IsLaneConsistent(lc_context_.ego_lane_id,
                                          ego_lane_id_)) {
-        // 前后帧的ego lane id 发生变化，认为换道完成                                  
+        // 前后帧的ego lane id 发生变化，认为换道完成                             
         // in progress lane change and lane id change
         LOG(WARNING) << "[HMI]lane change completed due to different lane id "
                      << lc_context_.ego_lane_id << " to " << ego_lane_id_
@@ -393,10 +414,11 @@ void EudmManager::UpdateLaneChangeContextByTask(
         lc_context_.completed = true;
         lc_context_.trigger_when_appropriate = false;
         last_lc_proposal_.trigger_time = stamp;
-      } else { // 换道进行中，还没有进入目标车道
+      } else { 
+        // 前后帧的ego lane id 没有发生变化，认为换道进行中 
         if (task.user_perferred_behavior != 1 &&
             last_task_.user_perferred_behavior == 1) {
-          // 向左的换道指令取消 
+          // 换道中，向左的换道指令取消
           // receive a lane cancel trigger
           LOG(WARNING) << "[HMI]lane change cancel by stick "
                        << last_task_.user_perferred_behavior << " to "
@@ -406,7 +428,7 @@ void EudmManager::UpdateLaneChangeContextByTask(
           last_lc_proposal_.trigger_time = stamp;
         } else if (task.user_perferred_behavior != -1 &&
                    last_task_.user_perferred_behavior == -1) {
-          // 向右的换道指令取消
+          // 换道中，向右的换道指令取消
           // receive a lane cancel trigger
           LOG(WARNING) << "[HMI]lane change cancel by stick "
                        << last_task_.user_perferred_behavior << " to "
@@ -415,7 +437,7 @@ void EudmManager::UpdateLaneChangeContextByTask(
           lc_context_.trigger_when_appropriate = false;
           last_lc_proposal_.trigger_time = stamp;
         } else if (lc_context_.type == LaneChangeTriggerType::kActive) {
-          // 换道类型是 自动变道，非拨杆变道
+          // 换道中，换道原因是ALC，并非用户触发
           if (bp_.cfg()
                   .function()
                   .active_lc()
@@ -425,7 +447,10 @@ void EudmManager::UpdateLaneChangeContextByTask(
                               .function()
                               .active_lc()
                               .auto_cancel_if_late_for_seconds()) {
-            // 换道超时，取消换道，配置参数为 15s
+            // 配置参数允许换道超时时取消变道，换道超时，取消换道，配置参数为 15s
+            // 超过变道允许执行时间
+
+            // log下原有换道决策被取消
             if (lc_context_.lat == LateralBehavior::kLaneChangeLeft) {
               LOG(WARNING)
                   << "[HMI]ACTIVE [Left] auto cancel due to outdated for "
@@ -446,7 +471,7 @@ void EudmManager::UpdateLaneChangeContextByTask(
                          .enable_auto_cancel_by_forbid_signal() &&
                      task.lc_info.forbid_lane_change_left &&
                      lc_context_.lat == LateralBehavior::kLaneChangeLeft) {
-            // 向左变道中，调试工具输入信号为禁止向左变道，取消变道
+            // ALC中，如果允许用户取消变道 && 调试工具输入信号为禁止向左变道 && 向左变道中 --->取消变道
             LOG(WARNING) << "[HMI]ACTIVE [Left] canceled due to forbidden "
                             "signal. Cd alc.";
             lc_context_.completed = true;
@@ -458,7 +483,7 @@ void EudmManager::UpdateLaneChangeContextByTask(
                          .enable_auto_cancel_by_forbid_signal() &&
                      task.lc_info.forbid_lane_change_right &&
                      lc_context_.lat == LateralBehavior::kLaneChangeRight) {
-            // 向右变道中，调试工具输入信号为禁止向右变道，取消变道
+            // ALC中，如果允许用户取消变道 && 调试工具输入信号为禁止向右变道 && 向右变道中 --->取消变道
             LOG(WARNING)
                 << "[HMI]ACTIVE [Right] canceled due to forbidden signal. "
                    "Cd alc.";
@@ -472,7 +497,7 @@ void EudmManager::UpdateLaneChangeContextByTask(
                      lc_context_.lat == LateralBehavior::kLaneChangeLeft &&
                      (task.user_perferred_behavior == 1 ||
                       task.user_perferred_behavior == 11)) {  //  EudmPlannerServer::JoyCallback 中不会有11
-            // 向左变道中，调试工具指令改为向右变道，取消变道
+            // ALC中，如果允许相应用户期望换道行为 && ALC向左变道  && 用户指令并非向左变道  --->取消变道
             LOG(WARNING)
                 << "[HMI]ACTIVE [left] canceled due to human opposite signal. "
                    "Cd alc.";
@@ -486,7 +511,7 @@ void EudmManager::UpdateLaneChangeContextByTask(
                      lc_context_.lat == LateralBehavior::kLaneChangeRight &&
                      (task.user_perferred_behavior == -1 ||
                       task.user_perferred_behavior == 12)) {  //  EudmPlannerServer::JoyCallback 中不会有12
-            // 向右变道中，调试工具指令改为向左变道，取消变道
+            // ALC中，如果允许相应用户期望换道行为 && ALC向右变道  && 用户指令并非向右变道  --->取消变道
             LOG(WARNING) << "[HMI]ACTIVE canceled due to human active signal. "
                             "Cd alc.";
             lc_context_.completed = true;
@@ -502,12 +527,14 @@ void EudmManager::UpdateLaneChangeContextByTask(
       if (task.user_perferred_behavior != 1 &&
           last_task_.user_perferred_behavior == 1 &&
           lc_context_.trigger_when_appropriate) {
+        // 用户前后帧指令不一致，取消变道，进入ALC
         LOG(WARNING) << "[HMI]clear cached stick trigger state. Cd alc.";
         lc_context_.trigger_when_appropriate = false;
         last_lc_proposal_.trigger_time = stamp;
       } else if (task.user_perferred_behavior != -1 &&
                  last_task_.user_perferred_behavior == -1 &&
                  lc_context_.trigger_when_appropriate) {
+        // 用户前后帧指令不一致，取消变道，进入ALC
         LOG(WARNING) << "[HMI]clear cached stick trigger state. Cd alc.";
         lc_context_.trigger_when_appropriate = false;
         last_lc_proposal_.trigger_time = stamp;
@@ -517,6 +544,7 @@ void EudmManager::UpdateLaneChangeContextByTask(
           last_task_.user_perferred_behavior != 1) {
         // receive a lane change right trigger and previous action has been
         // completed
+        // 换道已经完成，此时收到新的向右换道指令
         if (task.lc_info.forbid_lane_change_right) {
         // 收到向右换道指令，但是当前指令禁止向右换道，设置在合适时间触发换道
           LOG(WARNING)
@@ -525,9 +553,12 @@ void EudmManager::UpdateLaneChangeContextByTask(
           lc_context_.lat = LateralBehavior::kLaneChangeRight;
         } else {
           if (IsTriggerAppropriate(LateralBehavior::kLaneChangeRight)) {
+            // 换道已经完成，此时收到新的向右换道指令，并且上一帧规划中向右变道是可行的
+            // 这里为什么会有一个期望换道执行时间？？？？
             lc_context_.completed = false;
             lc_context_.trigger_when_appropriate = false;
             lc_context_.trigger_time = stamp;
+            // 计算在希望在哪个时刻换道
             lc_context_.desired_operation_time = GetNearestFutureDecisionPoint(
                 stamp, bp_.cfg().function().stick_lane_change_in_seconds());
             lc_context_.ego_lane_id = ego_lane_id_;
@@ -564,6 +595,7 @@ void EudmManager::UpdateLaneChangeContextByTask(
           lc_context_.lat = LateralBehavior::kLaneChangeLeft;
         } else {
           if (IsTriggerAppropriate(LateralBehavior::kLaneChangeLeft)) {
+            // 换道已经完成，此时收到新的向左换道指令，并且上一帧规划中向左变道是可行的
             lc_context_.completed = false;
             lc_context_.trigger_when_appropriate = false;
             lc_context_.trigger_time = stamp;
@@ -594,9 +626,11 @@ void EudmManager::UpdateLaneChangeContextByTask(
           }
         }
       } else if (lc_context_.trigger_when_appropriate) {
-      // 允许在合适时机触发换道，根据之前的换道指令，判断换道时机进行换道
+      // 之前的换道指令已经执行完毕，没有新的换道指令，
+      // 根据之前的换道指令，允许在合适时机触发换道，判断换道时机进行换道
         if (lc_context_.lat == LateralBehavior::kLaneChangeLeft &&
             !task.lc_info.forbid_lane_change_left) {
+          // 换道指令向左，用户也设置了左侧区域可以换道
           if (IsTriggerAppropriate(LateralBehavior::kLaneChangeLeft)) {
             lc_context_.completed = false;
             lc_context_.trigger_when_appropriate = false;
@@ -682,20 +716,20 @@ void EudmManager::UpdateLaneChangeContextByTask(
 
 void EudmManager::SaveSnapshot(Snapshot* snapshot) {
   snapshot->valid = true;
-  snapshot->plan_state = bp_.plan_state();
-  snapshot->original_winner_id = bp_.winner_id();
-  snapshot->processed_winner_id = bp_.winner_id();
-  snapshot->action_script = bp_.action_script();
-  snapshot->sim_res = bp_.sim_res();
-  snapshot->risky_res = bp_.risky_res();
-  snapshot->sim_info = bp_.sim_info();
-  snapshot->final_cost = bp_.final_cost();
-  snapshot->progress_cost = bp_.progress_cost();
-  snapshot->tail_cost = bp_.tail_cost();
-  snapshot->forward_trajs = bp_.forward_trajs();
+  snapshot->plan_state = bp_.plan_state();          // 主车当前状态
+  snapshot->original_winner_id = bp_.winner_id();   // 最佳的action序列的id
+  snapshot->processed_winner_id = bp_.winner_id();  // 最佳的action序列的id
+  snapshot->action_script = bp_.action_script();    // DCP Tree
+  snapshot->sim_res = bp_.sim_res();                // DCP Tree的每个action序列的是否可用/正确
+  snapshot->risky_res = bp_.risky_res();            // DCP Tree的每个action序列的是否通过RSS安全校验
+  snapshot->sim_info = bp_.sim_info();              // DCP Tree的每个action序列的不可用的原因
+  snapshot->final_cost = bp_.final_cost();          // DCP Tree的每个action序列的cost
+  snapshot->progress_cost = bp_.progress_cost();    // DCP Tree的每个action序列的每层的各项cost
+  snapshot->tail_cost = bp_.tail_cost();            // 0，eudm planner中没有计算
+  snapshot->forward_trajs = bp_.forward_trajs();    // DCP Tree的每个action序列的主车前向仿真结果
   snapshot->forward_lat_behaviors = bp_.forward_lat_behaviors();
   snapshot->forward_lon_behaviors = bp_.forward_lon_behaviors();
-  snapshot->surround_trajs = bp_.surround_trajs();
+  snapshot->surround_trajs = bp_.surround_trajs();   // 周围车辆轨迹
 
   snapshot->plan_stamp = map_adapter_.map()->time_stamp();
   snapshot->time_cost = bp_.time_cost();
@@ -719,7 +753,7 @@ void EudmManager::ConstructBehavior(common::SemanticBehavior* behavior) {
   behavior->state = last_snapshot_.plan_state;
   behavior->ref_lane = last_snapshot_.ref_lane;
 }
-// 根据车前一段车道线的曲率限速和用户设置速度，计算参考速度
+// 根据上一帧规划结果的道路的曲率限速和用户设置速度，计算参考速度
 ErrorType EudmManager::EvaluateReferenceVelocity(
     const planning::eudm::Task& task, decimal_t* ref_vel) {
   if (!last_snapshot_.ref_lane.IsValid()) {
@@ -805,6 +839,7 @@ ErrorType EudmManager::Run(
   LOG(WARNING) << std::fixed << std::setprecision(4)
                << "[Eudm]******************** RUN START: " << stamp
                << "******************";
+  // 计时器开始
   static TicToc eudm_timer;
   eudm_timer.tic();
 
@@ -833,8 +868,10 @@ ErrorType EudmManager::Run(
   sum_reselect_timer.tic();
   // * III: Summarize
   Snapshot snapshot;
+  // 保存决策结果
   SaveSnapshot(&snapshot);
   // * IV: Reselect
+  // 根据用户指令，从新筛选最终决策
   if (ReselectByContext(stamp, snapshot, &snapshot.processed_winner_id) !=
       kSuccess) {
     LOG(WARNING) << "[Eudm][Fatal]Reselect failed.";
@@ -868,6 +905,7 @@ ErrorType EudmManager::Run(
 
   static TicToc lane_timer;
   lane_timer.tic();
+  // 根据最终决策结果计算目标车道
   if (map_adapter_.map()->GetRefLaneForStateByBehavior(
           snapshot.plan_state, std::vector<int>(),
           snapshot.forward_lat_behaviors[snapshot.processed_winner_id].front(),
@@ -896,10 +934,14 @@ ErrorType EudmManager::Run(
 }
 
 // 上一帧得到的决策序列中，在当前时刻正在执行的决策
+// 在上一帧决策序列中，找到一个action的时间大于当前时间的action
 bool EudmManager::GetReplanDesiredAction(const decimal_t current_time,
                                          DcpAction* desired_action) {
+  // 上一帧没有决策结果(程序第一次运行) or 上一帧决策结果不可行
   if (!context_.is_valid) return false;
+  // 前后帧时间差
   decimal_t time_since_last_plan = current_time - context_.seq_start_time;
+  // 时光倒流
   if (time_since_last_plan < -kEPS) return false;
   decimal_t t_aggre = 0.0;
   bool find_match_action = false;
@@ -908,6 +950,9 @@ bool EudmManager::GetReplanDesiredAction(const decimal_t current_time,
     t_aggre += context_.action_seq[i].t;
     if (time_since_last_plan + kEPS < t_aggre) {
       *desired_action = context_.action_seq[i];
+      // 由于时间戳是圆整过的，这个时间也是相当被圆整了
+      // 因为 选择的action的持续作用时间是大于当前时刻的
+      // 为了选择的action和上一帧规划中的持续时间一致，所以需要计算其在当前帧需要继续执行的时间
       desired_action->t = t_aggre - time_since_last_plan;
       find_match_action = true;
       break;

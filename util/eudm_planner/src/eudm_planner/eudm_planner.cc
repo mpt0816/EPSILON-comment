@@ -10,6 +10,7 @@ namespace planning {
 
 std::string EudmPlanner::Name() { return std::string("Eudm behavior planner"); }
 
+// 解析 pb.txt 配置参数
 ErrorType EudmPlanner::ReadConfig(const std::string config_path) {
   printf("\n[EudmPlanner] Loading eudm planner config\n");
   using namespace google::protobuf;
@@ -25,6 +26,7 @@ ErrorType EudmPlanner::ReadConfig(const std::string config_path) {
 
 ErrorType EudmPlanner::GetSimParam(const planning::eudm::ForwardSimDetail& cfg,
                                    OnLaneForwardSimulation::Param* sim_param) {
+  // IDM 参数
   sim_param->idm_param.kMinimumSpacing = cfg.lon().idm().min_spacing();
   sim_param->idm_param.kDesiredHeadwayTime = cfg.lon().idm().head_time();
   sim_param->idm_param.kAcceleration = cfg.lon().limit().acc();
@@ -35,6 +37,7 @@ ErrorType EudmPlanner::GetSimParam(const planning::eudm::ForwardSimDetail& cfg,
   sim_param->idm_param.kExponent = cfg.lon().idm().exponent();
   sim_param->max_lon_acc_jerk = cfg.lon().limit().acc_jerk();
   sim_param->max_lon_brake_jerk = cfg.lon().limit().brake_jerk();
+  // 纯跟踪控制参数
   sim_param->steer_control_gain = cfg.lat().pure_pursuit().gain();
   sim_param->steer_control_max_lookahead_dist =
       cfg.lat().pure_pursuit().max_lookahead_dist();
@@ -50,18 +53,20 @@ ErrorType EudmPlanner::GetSimParam(const planning::eudm::ForwardSimDetail& cfg,
 }
 
 ErrorType EudmPlanner::Init(const std::string config) {
+  // 解析 eudm 的配置参数
   ReadConfig(config);
-
+  // 重置 DCP Tree的参数：树的深度（5），每层节点持续作用时间（1.0），最后一层节点持续作用时间（1.0）
   dcp_tree_ptr_ = new DcpTree(cfg_.sim().duration().tree_height(),
                               cfg_.sim().duration().layer(),
                               cfg_.sim().duration().last_layer());
   LOG(INFO) << "[Eudm]Init.";
   LOG(INFO) << "[Eudm]ActionScript size: "
             << dcp_tree_ptr_->action_script().size() << std::endl;
-
+  // 获取前向仿真的主车参数
   GetSimParam(cfg_.sim().ego(), &ego_sim_param_);
+  // 获取前向仿真的他车参数
   GetSimParam(cfg_.sim().agent(), &agent_sim_param_);
-
+  // RSS 参数
   rss_config_ = common::RssChecker::RssConfig(
       cfg_.safety().rss().response_time(),
       cfg_.safety().rss().longitudinal_acc_max(),
@@ -165,15 +170,18 @@ ErrorType EudmPlanner::ClassifyActionSeq(
     }
     duration += action.t;
   }
-  // episode中所有action都是kLaneKeeping情况，operation_at_seconds为什么要+1 ???
+  
   if (!find_lat_active_behavior) {
+    // episode中所有action都是kLaneKeeping情况，此时经过上述for循环 duration = 0
+    // 这里不用加上一个action持续时间吧
+    // 和上面for循环对operation_at_seconds不一致
     *operation_at_seconds = duration + cfg_.sim().duration().layer();
     *lat_behavior = common::LateralBehavior::kLaneKeeping;
     *is_cancel_operation = false;
   }
   return kSuccess;
 }
-// 设置储存多线程处理结果的容器
+// 设置储存多线程处理结果的容器，按照动作序列的数目设置容器的大小
 ErrorType EudmPlanner::PrepareMultiThreadContainers(const int n_sequence) {
   LOG(INFO) << "[Eudm][Process]Prepare multi-threading - " << n_sequence
             << " threads.";
@@ -252,12 +260,13 @@ ErrorType EudmPlanner::GetSurroundingForwardSimAgents(
 ErrorType EudmPlanner::RunEudm() {
   // * get relevant information
   common::SemanticVehicleSet surrounding_semantic_vehicles;
+  // 会从语义地图得到主车周围一定范围内的所有车辆
   if (map_itf_->GetKeySemanticVehicles(&surrounding_semantic_vehicles) !=
       kSuccess) {
     LOG(ERROR) << "[Eudm][Fatal]fail to get key semantic vehicles. Exit";
     return kWrongStatus;
   }
-
+  // 将车辆的信息和前向仿真的设置结合起来，为前向仿真做准备
   ForwardSimAgentSet surrounding_fsagents;
   GetSurroundingForwardSimAgents(surrounding_semantic_vehicles,
                                  &surrounding_fsagents);
@@ -266,7 +275,9 @@ ErrorType EudmPlanner::RunEudm() {
   int n_sequence = action_script.size();
 
   // * prepare for multi-threading
+  // 多线程计算，每个动作序列一个线程
   std::vector<std::thread> thread_set(n_sequence);
+  // 情况保存每个动作序列仿真结果和评价结果的容器
   PrepareMultiThreadContainers(n_sequence);
 
   // * threading
@@ -287,6 +298,7 @@ ErrorType EudmPlanner::RunEudm() {
 
   // * finish multi-threading, summary simulation results
   bool sim_success = false;
+  // 可行动作序列的数目
   int num_valid_behaviors = 0;
   for (int i = 0; i < static_cast<int>(sim_res_.size()); ++i) {
     if (sim_res_[i] == 1) {
@@ -294,7 +306,7 @@ ErrorType EudmPlanner::RunEudm() {
       num_valid_behaviors++;
     }
   }
-
+  // 打印信息
   for (int i = 0; i < n_sequence; ++i) {
     std::ostringstream line_info;
     line_info << "[Eudm][Result]" << i << " [";
@@ -354,22 +366,27 @@ ErrorType EudmPlanner::UpdateEgoBehaviorsUsingAction(
   return kSuccess;
 }
 
+// 根据动作序列，设置主车的横纵向仿真参数
 ErrorType EudmPlanner::UpdateSimSetupForScenario(
     const std::vector<DcpAction>& action_seq,
     ForwardSimEgoAgent* ego_fsagent) const {
   // * Get the type of lateral action sequence
+  // 最终的横向行为
   common::LateralBehavior seq_lat_behavior;
+  // 最终的横向行为时间开始执行时间
   decimal_t operation_at_seconds;
+  // 是否有先变道再取消的行为
   bool is_cancel_behavior;
   ClassifyActionSeq(action_seq, &operation_at_seconds, &seq_lat_behavior,
                     &is_cancel_behavior);
-  ego_fsagent->operation_at_seconds = operation_at_seconds; // 开始换道决策的时间
-  ego_fsagent->is_cancel_behavior = is_cancel_behavior;     // 是否有先换道再取消的行为
+  ego_fsagent->operation_at_seconds = operation_at_seconds; 
+  ego_fsagent->is_cancel_behavior = is_cancel_behavior;  
   // 先换道再取消 or 一直为车道保持 ： seq_lat_behavior = 车道保持
   // 有换道行为，无换道取消 ： seq_lat_behavior = 向左换道 or 向右换道
   ego_fsagent->seq_lat_behavior = seq_lat_behavior;
 
   // * get action sequence type
+  // 会动作序列重新划分了四种语义：先换道再取消、一直车道保持、先车道保持再换道、一直换道中
   if (is_cancel_behavior) {
     ego_fsagent->lat_behavior_longterm = LateralBehavior::kLaneKeeping;
     ego_fsagent->seq_lat_mode = LatSimMode::kChangeThenCancel;
@@ -388,7 +405,7 @@ ErrorType EudmPlanner::UpdateSimSetupForScenario(
   decimal_t desired_vel = std::floor(ego_fsagent->vehicle.state().velocity);
   simulator::IntelligentDriverModel::Param idm_param_tmp;
   idm_param_tmp = ego_sim_param_.idm_param;
-  // 每个episode的纵向行为决策都是一样的
+  // episode的每个纵向行为决策都是一样的
   switch (action_seq[1].lon) {
     case DcpLonAction::kAccelerate: {
       // IDM 模型的期望车速，主车当前速度 + 10 kph or 用户期望车速
@@ -431,6 +448,7 @@ ErrorType EudmPlanner::UpdateSimSetupForLayer(
   // * action -> behavior
   LateralBehavior lat_behavior;
   LongitudinalBehavior lon_behavior;
+  // 横纵向语义决策换一种枚举表达
   if (TranslateDcpActionToLonLatBehavior(action, &lat_behavior,
                                          &lon_behavior) != kSuccess) {
     return kWrongStatus;
@@ -444,7 +462,9 @@ ErrorType EudmPlanner::UpdateSimSetupForLayer(
       std::min(std::max(state.velocity * cfg_.sim().ref_line().len_vel_coeff(),
                         cfg_.sim().ref_line().forward_len_min()),
                cfg_.sim().ref_line().forward_len_max());
-
+  // 计算主车在当前仿真时刻主车的所属车道
+  // 和仿真开始时的车道可能不是同一个，因为仿真中主车位置改变
+  // 当前车道的概念是相对于时间的
   common::Lane lane_current;
   if (map_itf_->GetRefLaneForStateByBehavior(
           state, std::vector<int>(), LateralBehavior::kLaneKeeping,
@@ -454,7 +474,7 @@ ErrorType EudmPlanner::UpdateSimSetupForLayer(
   }
   ego_fsagent->current_lane = lane_current;
   ego_fsagent->current_stf = common::StateTransformer(lane_current);
-
+  // 当前时刻action的目标车道
   common::Lane lane_target;
   if (map_itf_->GetRefLaneForStateByBehavior(
           state, std::vector<int>(), ego_fsagent->lat_behavior,
@@ -465,7 +485,7 @@ ErrorType EudmPlanner::UpdateSimSetupForLayer(
   // 这种的来回赋值操作太多了
   ego_fsagent->target_lane = lane_target;
   ego_fsagent->target_stf = common::StateTransformer(lane_target);
-
+  // 整个动作周期内的目标车道，比如先换到在取消，其目标车道仍是原车道
   common::Lane lane_longterm;
   if (map_itf_->GetRefLaneForStateByBehavior(
           state, std::vector<int>(), ego_fsagent->lat_behavior_longterm,
@@ -490,9 +510,10 @@ ErrorType EudmPlanner::UpdateSimSetupForLayer(
     map_itf_->GetLeadingAndFollowingVehiclesFrenetStateOnLane(
         ego_fsagent->target_lane, state, other_vehicles, &has_front_vehicle,
         &front_vehicle, &front_fs, &has_rear_vehicle, &rear_vehicle, &rear_fs);
-
+    // 前车ID
     ego_fsagent->target_gap_ids(0) =
         has_front_vehicle ? front_vehicle.id() : -1;
+    // 后车ID
     ego_fsagent->target_gap_ids(1) = has_rear_vehicle ? rear_vehicle.id() : -1;
 
     if (cfg_.safety().rss_for_layers_enable()) {
@@ -513,6 +534,7 @@ ErrorType EudmPlanner::UpdateSimSetupForLayer(
                                 ego_fsagent->vehicle.param().d_cr();
 
       if (has_front_vehicle) {
+        // 前车的后悬
         decimal_t s_front_rbumper = front_fs.vec_s[0] -
                                     front_vehicle.param().length() / 2.0 +
                                     front_vehicle.param().d_cr();
@@ -531,6 +553,7 @@ ErrorType EudmPlanner::UpdateSimSetupForLayer(
       }
 
       if (has_rear_vehicle) {
+        // 后车的前悬
         decimal_t s_rear_fbumper = rear_fs.vec_s[0] +
                                    rear_vehicle.param().length() / 2.0 +
                                    rear_vehicle.param().d_cr();
@@ -584,7 +607,7 @@ ErrorType EudmPlanner::SimulateScenario(
   // * Setup ego longitudinal sim config
   ForwardSimEgoAgent ego_fsagent_this_layer;
   ego_fsagent_this_layer.vehicle = ego_vehicle;
-  // 根据episode决策序列，更新下前向仿真参数
+  // 根据动作序列，更新主车的横纵向仿真参数
   UpdateSimSetupForScenario(action_seq, &ego_fsagent_this_layer);
   // 每层决策下的周围车辆的状态
   ForwardSimAgentSet surrounding_fsagents_this_layer = surrounding_fsagents;
@@ -593,6 +616,7 @@ ErrorType EudmPlanner::SimulateScenario(
   bool is_sub_seq_risky = false;
   // 设置决策序列的临时变量，后面要修改决策序列
   // 将相对于根节点处车辆位置的横向决策，转化为相对于当前仿真action对应的车辆位置的横向决策
+  // 例如action序列都是向右变道，当在第3个action后主车到达目标车道，那么，由于ego lane变了，后续的action应该变为LaneKeep
   // 临时变量，只是用在前向仿真中
   std::vector<DcpAction> action_seq_sim = action_seq;
 
@@ -606,7 +630,7 @@ ErrorType EudmPlanner::SimulateScenario(
     // every step. A low-level reactive lane-changing controller can be
     // implemented without a lot of computation cost.
     // * update setup for this layer
-    // 计算主车的本车道和目标车道，在换道决策下的目标车道上的前车和后车
+    // 计算主车基于当前决策的本车道和目标车道，在换道决策下的目标车道上的前车和后车
     // 如果对每层决策计算RSS安全性，则计算主车和前后车辆的距离是否满足RSS要求
     if (kSuccess != UpdateSimSetupForLayer(action_this_layer,
                                            surrounding_fsagents_this_layer,
@@ -627,6 +651,7 @@ ErrorType EudmPlanner::SimulateScenario(
     // }
 
     // * simulate this action (layer)
+    // 每一层action的持续作用时间是 1s ，会以0.2s的时间步长进行仿真
     vec_E<common::Vehicle> ego_traj_multisteps;
     std::unordered_map<int, vec_E<common::Vehicle>> surround_trajs_multisteps;
     if (SimulateSingleAction(action_this_layer, ego_fsagent_this_layer,
@@ -652,7 +677,7 @@ ErrorType EudmPlanner::SimulateScenario(
     bool is_strictly_safe = false;
     int collided_id = 0;
     TicToc timer;
-    // action作用时间持续1s，仿真补偿0.2s，对每个仿真步长做碰撞检测
+    // action作用时间持续1s，仿真步长0.2s，对每个仿真步长做碰撞检测
     if (StrictSafetyCheck(ego_traj_multisteps, surround_trajs_multisteps,
                           &is_strictly_safe, &collided_id) != kSuccess) {
       (*sub_sim_res)[sub_seq_id] = 0;
@@ -672,6 +697,7 @@ ErrorType EudmPlanner::SimulateScenario(
     // * If lateral action finished, update simulation action sequence
     int current_lane_id;
     // 横向action如果是换道，判断换道是否完成
+    // action_ref_lane_id是当前action开始前的主车所在车道ID
     if (CheckIfLateralActionFinished(
             ego_fsagent_this_layer.vehicle.state(), action_ref_lane_id,
             ego_fsagent_this_layer.lat_behavior, &current_lane_id)) {
@@ -757,18 +783,28 @@ ErrorType EudmPlanner::SimulateActionSequence(
   // 在主车每个决策序列下，周围车辆行为可以构建出不同的场景，
   // 每个场景可以单独一个线程求解
   // TODO(@lu.zhang) Preliminary safety assessment here
+  // 由于实现的简化，每个车辆只有一个预测行为，论文中的CFB就取消了，也就不需要多线程了
   int n_sub_threads = 1;
-
+  // 不需要使用vector，这么做是为了后续拓展CFB
+  // 仿真结果， 0：失败，1：成功
   std::vector<int> sub_sim_res(n_sub_threads);
+  // 每个场景是否有风险
   std::vector<int> sub_risky_res(n_sub_threads);
+  // 仿真结果风险的字符串描述
   std::vector<std::string> sub_sim_info(n_sub_threads);
+  // 每层action的cost
   std::vector<std::vector<CostStructure>> sub_progress_cost(n_sub_threads);
+  // 没有计算这个值
   std::vector<CostStructure> sub_tail_cost(n_sub_threads);
+  // 主车的仿真轨迹
   vec_E<vec_E<common::Vehicle>> sub_forward_trajs(n_sub_threads);
+  // 主车的横向动作序列
   std::vector<std::vector<LateralBehavior>> sub_forward_lat_behaviors(
       n_sub_threads);
+  // 主车的纵向动作序列，每个动作序列里的纵向决策是一样的
   std::vector<std::vector<LongitudinalBehavior>> sub_forward_lon_behaviors(
       n_sub_threads);
+  // 周围车辆的仿真轨迹
   vec_E<std::unordered_map<int, vec_E<common::Vehicle>>> sub_surround_trajs(
       n_sub_threads);
 
@@ -777,14 +813,16 @@ ErrorType EudmPlanner::SimulateActionSequence(
                    &sub_progress_cost, &sub_tail_cost, &sub_forward_trajs,
                    &sub_forward_lat_behaviors, &sub_forward_lon_behaviors,
                    &sub_surround_trajs);
-
+  // 因为只有一个线程，只仿真了一个场景，所以只需判断保存仿真结果队列的第一个元素(也只有一个元素)
   if (sub_sim_res.front() == 0) {
+    // 仿真失败
     sim_res_[seq_id] = 0;
     sim_info_[seq_id] = sub_sim_info.front();
     return kWrongStatus;
   }
 
   // ~ Here use the default scenario
+  // 仿真成功，更新对应的动作序列的结果，因为只仿真了一个场景，所以取第一个元素(也只有一个元素)
   sim_res_[seq_id] = 1;
   risky_res_[seq_id] = sub_risky_res.front();
   sim_info_[seq_id] = sub_sim_info.front();
@@ -929,7 +967,8 @@ ErrorType EudmPlanner::RunOnce() {
                << lc_info_.lane_change_right_unsafe_by_occu << ","
                << lc_info_.left_solid_lane << "," << lc_info_.right_solid_lane;
   ego_lane_id_ = ego_lane_id_by_pos;
-
+  
+  // 令人疑惑的RSS相关命名
   const decimal_t forward_rss_check_range = 130.0;
   const decimal_t backward_rss_check_range = 130.0;
   const decimal_t forward_lane_len = forward_rss_check_range;
@@ -952,6 +991,7 @@ ErrorType EudmPlanner::RunOnce() {
     int num_actions = action_seq.size();
     for (int j = 1; j < num_actions; j++) {
       // 前后两个action变道方向相反的episode需要删除
+      // 根据上游DCP Tree的生成策略，只有当Root node的横向决策是变道情况下，才会有这种情况
       if ((action_seq[j - 1].lat == DcpLatAction::kLaneChangeLeft &&
            action_seq[j].lat == DcpLatAction::kLaneChangeRight) ||
           (action_seq[j - 1].lat == DcpLatAction::kLaneChangeRight &&
@@ -1021,7 +1061,7 @@ ErrorType EudmPlanner::EvaluateMultiThreadSimResults(int* winner_id,
   *winner_id = best_id;
   return kSuccess;
 }
-
+// 计算两条轨迹的RSS cost，如果RSS计算危险，标记发生危险的车辆ID
 ErrorType EudmPlanner::EvaluateSafetyStatus(
     const vec_E<common::Vehicle>& traj_a, const vec_E<common::Vehicle>& traj_b,
     decimal_t* cost, bool* is_rss_safe, int* risky_id) {
@@ -1203,6 +1243,7 @@ ErrorType EudmPlanner::CostFunction(
     bool is_safe = true;
     int risky_id = 0;
     // 和论文的表述不一致
+    // 穷举计算主车和他车的碰撞风险
     EvaluateSafetyStatus(ego_traj, surround_traj.second, &safety_cost, &is_safe,
                          &risky_id);
     if (!is_safe) {
@@ -1274,10 +1315,11 @@ ErrorType EudmPlanner::CostFunction(
 ErrorType EudmPlanner::GetSimTimeSteps(const DcpAction& action,
                                        std::vector<decimal_t>* dt_steps) const {
   decimal_t sim_time_resolution = cfg_.sim().duration().step();  // 0.2s
-  decimal_t sim_time_total = action.t;  // action的持续作用时间，论文和代码设置的是1s
+  decimal_t sim_time_total = action.t;  // action的持续作用时间，论文和代码设置的是1s，根节点时间不一定是 1s
   int n_1 = std::floor(sim_time_total / sim_time_resolution);  // 1 / 0.2 = 5
-  decimal_t dt_remain = sim_time_total - n_1 * sim_time_resolution; // 1.0 - 5 * 0.2 = 0.0
+  decimal_t dt_remain = sim_time_total - n_1 * sim_time_resolution; // 1.0 - 5 * 0.2 = 0.0，取整后会有误差
   std::vector<decimal_t> steps(n_1, sim_time_resolution);  // steps = [0.2, 0.2, 0.2, 0.2, 0.2]
+  // 剩余仿真时间误差太小则舍去
   if (fabs(dt_remain) > kEPS) {
     steps.insert(steps.begin(), dt_remain);
   }
@@ -1306,7 +1348,7 @@ ErrorType EudmPlanner::SimulateSingleAction(
   ForwardSimEgoAgent ego_fsagent_this_step = ego_fsagent_this_layer;
   ForwardSimAgentSet surrounding_fsagents_this_step =
       surrounding_fsagents_this_layer;
-  // DCT Tree的每个action的持续时间是1s，前向仿真的时间间隔是0.2s，
+  // DCT Tree的每个action的持续时间是1s(根节点不一定，最后一个节点也不一定)，前向仿真的时间间隔是0.2s，
   // 每次每隔0.2s进行一次前向仿真，将第五次的前向仿真结果作为action的结果
   for (int i = 0; i < static_cast<int>(dt_steps.size()); i++) {
     decimal_t sim_time_step = dt_steps[i];  // sim_time_step = 0.2
@@ -1349,11 +1391,10 @@ ErrorType EudmPlanner::SimulateSingleAction(
         all_sim_vehicles.vehicles.at(p_fsa.first).set_id(kInvalidAgentId);
 
         common::State state_output;
-        // 需要再确定下预测方法，
         // 这里只有对周围车辆单个的预测结果做前向仿真
         // 并没有像论文中 CFB 描述的那样，先根据主车action 确定 key vehicle，其他车辆按照其最大概率的意图行驶
         // key vehicle需要对每种意图进行仿真计算
-        // 代码这种处理相对于每个vehicle只有一种预测结果了
+        // 代码这种处理相对于每个vehicle只有一种预测结果了(代码在前面的预测结果也只有一种)
         if (kSuccess !=
             SurroundingAgentForwardSim(p_fsa.second, all_sim_vehicles,
                                        sim_time_step, &state_output)) {

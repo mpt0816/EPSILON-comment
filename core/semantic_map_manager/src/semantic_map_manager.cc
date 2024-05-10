@@ -5,6 +5,7 @@ namespace semantic_map_manager {
 SemanticMapManager::SemanticMapManager(const int &id,
                                        const std::string &agent_config_path)
     : ego_id_(id), agent_config_path_(agent_config_path) {
+  // 解析配置文件
   p_config_loader_ = new ConfigLoader();
   p_config_loader_->set_ego_id(ego_id_);
   p_config_loader_->set_agent_config_path(agent_config_path_);
@@ -47,6 +48,7 @@ ErrorType SemanticMapManager::UpdateSemanticMap(
 
   // * update key lanes and its LUT
   // LUT： Look Up Table ??
+  // 这个配置应该是 false
   if (agent_config_info_.enable_fast_lane_lut) {
     UpdateLocalLanesAndFastLut();
   }
@@ -58,6 +60,7 @@ ErrorType SemanticMapManager::UpdateSemanticMap(
   UpdateKeyVehicles();
 
   // * openloop prediction for all semantic vehicles
+  // 配置为 true
   if (agent_config_info_.enable_openloop_prediction) {
     // IDM模式中没有考虑前车，纵向匀速
     OpenloopTrajectoryPrediction();
@@ -90,6 +93,7 @@ ErrorType SemanticMapManager::SaveMapToLog() {
   return kSuccess;
 }
 
+// 通过车辆距离其最近车道横向位置和速度计算横向行为概率
 ErrorType SemanticMapManager::NaiveRuleBasedLateralBehaviorPrediction(
     const common::Vehicle &vehicle, const int nearest_lane_id,
     common::ProbDistOfLatBehaviors *lat_probs) {
@@ -114,7 +118,7 @@ ErrorType SemanticMapManager::NaiveRuleBasedLateralBehaviorPrediction(
 
   const decimal_t lat_distance_threshold = 0.4;
   const decimal_t lat_vel_threshold = 0.35;
-  if (use_right_hand_axis_) {
+  if (use_right_hand_axis_) { // true
     // 车辆向左偏移位置和速度大于设定阈值，且左侧有车道允许换道，直接设置左换道概率为1
     if (fs.vec_dt[0] > lat_distance_threshold &&
         fs.vec_dt[1] > lat_vel_threshold &&
@@ -277,14 +281,16 @@ ErrorType SemanticMapManager::UpdateSemanticVehicles() {
   for (const auto &v : surrounding_vehicles_.vehicles) {
     common::SemanticVehicle semantic_vehicle;
     semantic_vehicle.vehicle = v.second;
+    // 计算车辆最近的车道的ID，距离最近车道的距离，在最近车道上的位置s
     GetNearestLaneIdUsingState(
         semantic_vehicle.vehicle.state().ToXYTheta(), std::vector<int>(),
         &semantic_vehicle.nearest_lane_id, &semantic_vehicle.dist_to_lane,
         &semantic_vehicle.arc_len_onlane);
-
+    // 计算车辆横向行为概率
     NaiveRuleBasedLateralBehaviorPrediction(
         semantic_vehicle.vehicle, semantic_vehicle.nearest_lane_id,
         &semantic_vehicle.probs_lat_behaviors);
+    // 挑选出最大横向意图
     semantic_vehicle.probs_lat_behaviors.GetMaxProbBehavior(
         &semantic_vehicle.lat_behavior);
 
@@ -300,13 +306,17 @@ ErrorType SemanticMapManager::UpdateSemanticVehicles() {
         std::pair<int, common::SemanticVehicle>(semantic_vehicle.vehicle.id(),
                                                 semantic_vehicle));
   }
-  {
+  { 
+    // 对semantic_surrounding_vehicles_的内容更新
     semantic_surrounding_vehicles_.semantic_vehicles.swap(
         semantic_vehicles_tmp.semantic_vehicles);
   }
   return kSuccess;
 }
 
+// 使用IDM和纯跟模型预测车辆轨迹
+// 预测的轨迹，是车辆向其最大横向意图概率目标车道的运动轨迹
+// IDM和纯跟踪是 open loop？？？
 ErrorType SemanticMapManager::OpenloopTrajectoryPrediction() {
   openloop_pred_trajs_.clear();
   for (const auto &p_sv : semantic_surrounding_vehicles_.semantic_vehicles) {
@@ -341,6 +351,7 @@ ErrorType SemanticMapManager::UpdateSemanticLaneSet() {
       for (const auto &pt : pe.second.lane_points) {
         samples.push_back(pt);
       }
+      // 样条曲线平滑车道中心线
       if (common::LaneGenerator::GetLaneBySamplePoints(
               samples, &semantic_lane.lane) != kSuccess) {
         continue;
@@ -352,6 +363,9 @@ ErrorType SemanticMapManager::UpdateSemanticLaneSet() {
     }
   }
   // Check the consistency of semantic map
+  // 检测车道网络的正确性
+  // 如果一条车道可以向左/向右变道，检测其左/右侧车道是否在 车道集合中，否则设置为不可变道
+  // 如果一条车道有前序后继，检测其前序后继是否在 车道集合中，否则删除其前序后继车道
   {
     for (auto &semantic_lane : semantic_lane_set_.semantic_lanes) {
       if (semantic_lane.second.l_change_avbl) {
@@ -603,7 +617,7 @@ ErrorType SemanticMapManager::GetDistanceToLanesUsing3DofState(
     Vec2f pt;
     p.second.lane.GetPositionByArcLength(arc_len, &pt);
     double dist = std::hypot((state(0) - pt(0)), (state(1) - pt(1)));
-
+    // 距离车道距离大于 10m 不考虑
     if (dist > lane_range_) continue;
 
     decimal_t lane_angle;
@@ -817,8 +831,11 @@ ErrorType SemanticMapManager::GetNearestLaneIdUsingState(
       lanes_in_angle_diff;
   for (const auto &ele : lanes_in_dist) {
     if (std::get<0>(ele) > nearest_lane_range_) {
+      // 距离车道的横向大于 1.5m，就不再考虑了
+      // 因为 set 是按照到每条车道的距离从小到大排序的
       break;
     }
+    // 调整下排序优先级，如果距离车道都在 1.5m范围，横向偏差下的车道优先级高
     lanes_in_angle_diff.insert(std::tuple<decimal_t, decimal_t, decimal_t, int>(
         fabs(std::get<2>(ele)), std::get<0>(ele), std::get<1>(ele),
         std::get<3>(ele)));
@@ -876,9 +893,11 @@ ErrorType SemanticMapManager::TrajectoryPredictionForVehicle(
 
 ErrorType SemanticMapManager::UpdateKeyVehicles() {
   // ~ directly use semantic surrounding vehicle as key vehicle
+  // 关键车辆没有挑选，主车周围的车辆都认为是关键车辆
   semantic_key_vehicles_ = semantic_surrounding_vehicles_;
   key_vehicles_ = surrounding_vehicles_;
 #if 1
+  // 100m
   decimal_t search_radius = agent_config_info_.surrounding_search_radius;
 
   std::map<int, decimal_t> key_lane_ids;  // lane_id, length to the cur_pos
@@ -894,6 +913,7 @@ ErrorType SemanticMapManager::UpdateKeyVehicles() {
 
   // Find key lane ids
   {
+    // 主车当前车道，如果可以当前车道允许变道，把左右车道也加进去
     std::vector<int> mid_lane_ids;
     // left and right lanes
     // id - reference arc_len of start points w.r.t to ego vehicle
@@ -911,8 +931,9 @@ ErrorType SemanticMapManager::UpdateKeyVehicles() {
       mid_lane_ids.push_back(
           whole_lane_net_.lane_set.at(cur_lane_id).r_lane_id);
     }
-
-    // successors
+    // 如果主车的当前车道、左右车道的长度不满足搜索范围
+    // 则将其前序后继车道纳入搜索范围
+    // successors, 后继车道
     decimal_t len_front =
         whole_lane_net_.lane_set.at(cur_lane_id).length - cur_arc_len;
     for (const int &id : mid_lane_ids) {
@@ -969,7 +990,7 @@ ErrorType SemanticMapManager::UpdateKeyVehicles() {
   decimal_t max_radius = 170.0;
   decimal_t min_radius = 30.0;
   decimal_t dec_comfort = 1.6;
-  decimal_t t_pl = 5.0;
+  decimal_t t_pl = 5.0; // 规划时域？
   decimal_t t_comfort =
       std::max(t_pl, ego_vehicle_.state().velocity / dec_comfort);
   decimal_t pl_horizon_length = ego_vehicle_.state().velocity * t_comfort + 100;
@@ -984,6 +1005,7 @@ ErrorType SemanticMapManager::UpdateKeyVehicles() {
   key_vehicle_ids_.clear();
   semantic_key_vehicles_.semantic_vehicles.clear();
   key_vehicles_.vehicles.clear();
+  // 将主车前后一定范围内的车辆挑选出来
   {
     for (const auto v : semantic_surrounding_vehicles_.semantic_vehicles) {
       if (v.second.dist_to_lane > max_distance_to_lane_) {
@@ -1039,6 +1061,8 @@ ErrorType SemanticMapManager::UpdateKeyVehicles() {
   return kSuccess;
 }
 
+// 在目标车道上采样车道中心线，如果不满足长度要求
+// 则在其前序后继车道上采样，并平滑
 ErrorType SemanticMapManager::GetLocalLaneSamplesByState(
     const common::State &state, const int lane_id,
     const std::vector<int> &navi_path, const decimal_t max_reflane_dist,
@@ -1215,6 +1239,7 @@ ErrorType SemanticMapManager::GetRefLaneForStateByBehavior(
   }
 
   int target_lane_id;
+  // 根据横向意图计算目标车道
   if (GetTargetLaneId(current_lane_id, behavior, &target_lane_id) != kSuccess) {
     // printf(
     //     "[GetRefLaneForStateByBehavior]fail to get target lane from lane %d "
@@ -1242,7 +1267,7 @@ ErrorType SemanticMapManager::GetRefLaneForStateByBehavior(
     printf("[GetRefLaneForStateByBehavior]Cannot get local lane samples.\n");
     return kWrongStatus;
   }
-
+  // 将采样点转化为lane
   if (kSuccess != GetLaneBySampledPoints(samples, is_high_quality, lane)) {
     return kWrongStatus;
   }

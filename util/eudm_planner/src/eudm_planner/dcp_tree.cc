@@ -47,9 +47,10 @@ ErrorType DcpTree::GenerateActionScript() {
   // 清除历史决策
   action_script_.clear();
   std::vector<DcpAction> ongoing_action_seq;
+  // 外层：不同的 纵向决策
   for (int lon = 0; lon < static_cast<int>(DcpLonAction::MAX_COUNT); lon++) {
     ongoing_action_seq.clear();
-    // ongoing_action_seq的决策在每一步(DCP Tree的每一层)的横纵向action都是一样的
+    // 第一个action：横向决策是不变的，都是主车当前的横向行为，纵向决策会改变
     ongoing_action_seq.push_back(
         DcpAction(DcpLonAction(lon), ongoing_action_.lat, ongoing_action_.t));
 
@@ -66,14 +67,14 @@ ErrorType DcpTree::GenerateActionScript() {
           action_script_.push_back(actions);
         }
       }
-      // 在DCP Tree的每一层设置为和根节点一样的action
+      // 生成和第一个action横纵向决策一致的节点，并push的动作序列
       ongoing_action_seq.push_back(
           DcpAction(DcpLonAction(lon), ongoing_action_.lat, layer_time_));
     }
-    // 在整个循环中，这里会push进去 三个episode，每个episode内的action都是一样的
     action_script_.push_back(ongoing_action_seq);
   }
   // override the last layer time
+  // 对最后一个action设置为特殊设置的动作持续时间
   for (auto& action_seq : action_script_) {
     action_seq.back().t = last_layer_time_;
   }

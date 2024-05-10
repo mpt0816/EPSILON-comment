@@ -333,6 +333,7 @@ class OnLaneForwardSimulation {
     if (stf.GetFrenetStateFromState(current_state, &current_fs) != kSuccess ||
         current_fs.vec_s[1] < -kEPS) {
       // * ego Frenet state invalid or ego vehicle reverse gear
+      // 车速小于0，没有横向运动了
       steer_calculation_failed = true;
     }
 
@@ -348,7 +349,7 @@ class OnLaneForwardSimulation {
         steer_calculation_failed = true;
       }
     }
-
+    // 转向计算失败的话，就使用当前状态的转向角
     steer = steer_calculation_failed ? current_state.steer : steer;
     decimal_t sim_vel = param.idm_param.kDesiredVelocity;
     if (param.auto_decelerate_if_lat_failed && steer_calculation_failed) {
@@ -449,6 +450,7 @@ class OnLaneForwardSimulation {
                  common::FrenetState::kInitWithDs);
 
     State dest_state;
+    // 预瞄点的笛卡尔坐标值
     if (stf.GetStateFromFrenetState(dest_fs, &dest_state) != kSuccess) {
       return kWrongStatus;
     }

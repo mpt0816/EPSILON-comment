@@ -25,6 +25,7 @@
 #include "visualization_msgs/MarkerArray.h"
 
 namespace planning {
+  // 这里是MPDM
 class BehaviorPlannerServer {
  public:
   using SemanticMapManager = semantic_map_manager::SemanticMapManager;

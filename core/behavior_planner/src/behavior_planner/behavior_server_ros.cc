@@ -104,6 +104,7 @@ void BehaviorPlannerServer::PlanCycleCallback() {
     }
 
     if (has_callback_binded_) {
+      // 将获得behavior的最新的语义地图信息发送给ssc planner
       private_callback_fn_(smm);
     }
 

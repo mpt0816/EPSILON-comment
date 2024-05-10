@@ -48,6 +48,7 @@ ErrorType BehaviorPlanner::RunRoutePlanner(const int nearest_lane_id) {
   map_itf_->GetEgoState(&ego_state);
   p_route_planner_->set_ego_state(ego_state);
   p_route_planner_->set_nearest_lane_id(nearest_lane_id);
+  // 在主车当前车道的后序车道中，随机生成一条行驶车道
   if (p_route_planner_->RunOnce() == kSuccess) {
   }
   // printf("[RoutePlanner]succeed in time %lf ms.\n", timer_rp.toc());
@@ -61,6 +62,8 @@ ErrorType BehaviorPlanner::RunOnce() {
   // ~ step 2: decision making on the applicable behavior set
   // ~ step 3: construct complete semantic bahavior
   int ego_lane_id_by_pos = kInvalidLaneId;
+  // p_route_planner_尚未运行，因此 navi_path 是empty
+  // 计算 ego lane id
   if (map_itf_->GetEgoLaneIdByPosition(p_route_planner_->navi_path(),
                                        &ego_lane_id_by_pos) != kSuccess) {
     printf("[BP RunOnce]Err - Ego not on lane.\n");
@@ -79,16 +82,19 @@ ErrorType BehaviorPlanner::RunOnce() {
   }
 
   if (ego_lane_id_ == kInvalidAgentId) {
+    // 只在程序第一次运行的时候执行
     UpdateEgoLaneId(ego_lane_id_by_pos);
   }
 
   LateralBehavior behavior_by_lane_id;
+  // 通过当前帧 ego lane 和 上一帧的行为决策会使主车进入哪个车道进行对比，来确定主车行为
+  // 这里的更新 behavio_ 有啥用？后面计算没有用到
   if (JudgeBehaviorByLaneId(ego_lane_id_by_pos, &behavior_by_lane_id) !=
       kSuccess) {
     printf("[RunOnce]fail to judge behavior by lane id!\n");
     return kWrongStatus;
   }
-
+  // 更新 直行、向左变道和向右变道 行为的各自的车道集合
   UpdateEgoLaneId(ego_lane_id_by_pos);
   printf("[MPDM]ego lane id: %d.\n", ego_lane_id_);
 
@@ -133,12 +139,15 @@ ErrorType BehaviorPlanner::MultiBehaviorJudge(
     decimal_t* mpdm_desired_velocity) {
   // * get relevant information
   common::SemanticVehicleSet semantic_vehicle_set;
+  // 从语义地图获取主车周围的关键车辆
+  // 从代码实现来看，就是主车一定范围内的车辆
   if (map_itf_->GetKeySemanticVehicles(&semantic_vehicle_set) != kSuccess) {
     printf("[MPDM]fail to get key vehicles.\n");
     return kWrongStatus;
   }
 
   common::Vehicle ego_vehicle;
+  // 获取主车信息
   if (map_itf_->GetEgoVehicle(&ego_vehicle) != kSuccess) {
     printf("[MPDM]fail to get ego vehicle.\n");
     return kWrongStatus;
@@ -149,11 +158,13 @@ ErrorType BehaviorPlanner::MultiBehaviorJudge(
             << semantic_vehicle_set.semantic_vehicles.size() << std::endl;
 
   // * clean the states
+  // 清空历史信息
   forward_trajs_.clear();
   forward_behaviors_.clear();
   surround_trajs_.clear();
 
   // * collect potential behaviors
+  // 主车可能的横向决策行为，LaneKeep是必然存在的，向左向右变道需要根据是否有左右侧车道且允许变道确定
   std::vector<LateralBehavior> potential_behaviors{
       common::LateralBehavior::kLaneKeeping};
   if (!potential_lcl_lane_ids_.empty())
@@ -165,6 +176,7 @@ ErrorType BehaviorPlanner::MultiBehaviorJudge(
   const decimal_t max_backward_len = 10.0;
   for (auto it = semantic_vehicle_set.semantic_vehicles.begin();
        it != semantic_vehicle_set.semantic_vehicles.end(); ++it) {
+    // 获取车辆最大概率的横向意图
     common::LateralBehavior lat_behavior;
     if (map_itf_->GetPredictedBehavior(it->second.vehicle.id(),
                                        &lat_behavior) != kSuccess) {
@@ -173,6 +185,9 @@ ErrorType BehaviorPlanner::MultiBehaviorJudge(
     decimal_t forward_lane_len =
         std::max(it->second.vehicle.state().velocity * 10.0, 50.0);
     common::Lane ref_lane;
+    // 根据车辆最大概率横向意图计算其参考线
+    // ref lane在语义地图更新时，不是已经计算了吗？
+    // 怎么这里还再计算一遍
     if (map_itf_->GetRefLaneForStateByBehavior(
             it->second.vehicle.state(), std::vector<int>(), lat_behavior,
             forward_lane_len, max_backward_len, false, &ref_lane) == kSuccess) {
@@ -188,8 +203,8 @@ ErrorType BehaviorPlanner::MultiBehaviorJudge(
 
   // TicToc timer;
   for (int i = 0; i < num_available_behaviors; i++) {
-    vec_E<common::Vehicle> traj;
-    std::unordered_map<int, vec_E<common::Vehicle>> sur_trajs;
+    vec_E<common::Vehicle> traj;  // 主车的轨迹
+    std::unordered_map<int, vec_E<common::Vehicle>> sur_trajs;  // 周围车辆的轨迹
     if (SimulateEgoBehavior(ego_vehicle, potential_behaviors[i],
                             semantic_vehicle_set, &traj,
                             &sur_trajs) != kSuccess) {
@@ -231,6 +246,7 @@ ErrorType BehaviorPlanner::MultiBehaviorJudge(
   //        static_cast<int>(winner_behavior), winner_score);
 
   // * output
+  // 限制期望车速和当前车速的差值
   const decimal_t max_vel_cmd_gap = 5.0;
   if (fabs(winner_desired_vel - ego_vehicle.state().velocity) >
       max_vel_cmd_gap) {
@@ -240,7 +256,8 @@ ErrorType BehaviorPlanner::MultiBehaviorJudge(
       winner_desired_vel = ego_vehicle.state().velocity - max_vel_cmd_gap;
     }
   }
-
+  // 如果有HMI如果换道指令，且可行，则使用换道指令
+  // 如果没有换道指令，则使用cost的换道策略
   if (lock_to_hmi_) {
     auto it = std::find(forward_behaviors_.begin(), forward_behaviors_.end(),
                         hmi_behavior_);
@@ -255,7 +272,7 @@ ErrorType BehaviorPlanner::MultiBehaviorJudge(
   *mpdm_desired_velocity = winner_desired_vel;
   return kSuccess;
 }
-
+// 输入参数 agent_vehicles 包含主车
 ErrorType BehaviorPlanner::OpenloopSimForward(
     const common::SemanticVehicle& ego_semantic_vehicle,
     const common::SemanticVehicleSet& agent_vehicles,
@@ -276,6 +293,7 @@ ErrorType BehaviorPlanner::OpenloopSimForward(
   common::State ego_state;
   for (int i = 0; i < num_steps_forward; i++) {
     sim_param_.idm_param.kDesiredVelocity = reference_desired_velocity_;
+    // 主车不考虑前车进行仿真
     if (planning::OnLaneForwardSimulation::PropagateOnce(
             common::StateTransformer(ego_semantic_vehicle.lane),
             cur_ego_vehicle, common::Vehicle(), sim_resolution_, sim_param_,
@@ -288,6 +306,7 @@ ErrorType BehaviorPlanner::OpenloopSimForward(
           agent_vehicles.semantic_vehicles.at(v.first).vehicle.state().velocity;
       sim_param_.idm_param.kDesiredVelocity = desired_vel;
       common::State agent_state;
+      // 不考虑前车进行仿真
       if (planning::OnLaneForwardSimulation::PropagateOnce(
               common::StateTransformer(v.second.lane), v.second.vehicle,
               common::Vehicle(), sim_resolution_, sim_param_,
@@ -324,6 +343,7 @@ ErrorType BehaviorPlanner::SimulateEgoBehavior(
   decimal_t forward_lane_len =
       std::max(ego_vehicle.state().velocity * 10.0, 50.0);
   common::Lane ego_reflane;
+  // 根据主车的横向决策计算主车的参考线
   if (map_itf_->GetRefLaneForStateByBehavior(
           ego_vehicle.state(), p_route_planner_->navi_path(), ego_behavior,
           forward_lane_len, max_backward_len, false,
@@ -337,17 +357,19 @@ ErrorType BehaviorPlanner::SimulateEgoBehavior(
     ego_semantic_vehicle.vehicle = ego_vehicle;
     ego_semantic_vehicle.lane = ego_reflane;
   }
-
+  // 包含主车和周围所有车辆的集合
   common::SemanticVehicleSet semantic_vehicle_set_tmp = semantic_vehicle_set;
   semantic_vehicle_set_tmp.semantic_vehicles.insert(
       std::make_pair(ego_vehicle.id(), ego_semantic_vehicle));
 
   // ~ multi-agent forward
   printf("[MPDM]simulating behavior %d.\n", static_cast<int>(ego_behavior));
+  // 在主车的横向策略下前向仿真
   if (MultiAgentSimForward(ego_vehicle.id(), semantic_vehicle_set_tmp, traj,
                            surround_trajs) != kSuccess) {
     printf("[MPDM]multi agent forward under %d failed.\n",
            static_cast<int>(ego_behavior));
+    // 所有车辆在仿真时，都认为没有前车
     if (OpenloopSimForward(ego_semantic_vehicle, semantic_vehicle_set, traj,
                            surround_trajs) != kSuccess) {
       printf("[MPDM]open loop forward under %d failed.\n",
@@ -417,6 +439,7 @@ ErrorType BehaviorPlanner::EvaluateSafetyCost(
                                        inflated_b.param(), inflated_b.state(),
                                        &is_collision);
     if (is_collision) {
+      // 如果碰撞，使用速度差计算cost？？？
       cost_tmp +=
           0.01 * fabs(traj_a[i].state().velocity - traj_b[i].state().velocity) *
           0.5;
@@ -438,6 +461,7 @@ ErrorType BehaviorPlanner::EvaluateSinglePolicyTraj(
     }
   }
   // * efficiency
+  // 终端时刻 主车速度 和 期望速度 的偏差
   common::Vehicle ego_vehicle_terminal = forward_traj.back();
   decimal_t cost_efficiency_ego_to_desired_vel =
       fabs(ego_vehicle_terminal.state().velocity -
@@ -448,6 +472,7 @@ ErrorType BehaviorPlanner::EvaluateSinglePolicyTraj(
   const decimal_t max_backward_len = 10.0;
   decimal_t forward_lane_len =
       std::max(ego_vehicle_terminal.state().velocity * 10.0, 50.0);
+  // 计算 终端时刻 主车 的 当前车道
   if (map_itf_->GetRefLaneForStateByBehavior(
           ego_vehicle_terminal.state(), p_route_planner_->navi_path(),
           common::LateralBehavior::kLaneKeeping, forward_lane_len,
@@ -459,6 +484,7 @@ ErrorType BehaviorPlanner::EvaluateSinglePolicyTraj(
   decimal_t cost_efficiency_leading_to_desired_vel = 0.0;
   decimal_t distance_residual_ratio = 0.0;
   const decimal_t lat_range = 2.2;
+  // 计算 终端时刻 主车 的 前车
   if (map_itf_->GetLeadingVehicleOnLane(
           ego_ref_lane, ego_vehicle_terminal.state(), vehicle_set, lat_range,
           &leading_vehicle, &distance_residual_ratio) == kSuccess) {
@@ -490,6 +516,7 @@ ErrorType BehaviorPlanner::EvaluateSinglePolicyTraj(
 
   // * action
   decimal_t cost_action = 0.0;
+  // 换道行为的cost
   if (behavior != common::LateralBehavior::kLaneKeeping) {
     cost_action += 0.5;
   }
@@ -508,6 +535,7 @@ ErrorType BehaviorPlanner::GetDesiredVelocityOfTrajectory(
     const vec_E<common::Vehicle> vehicle_vec, decimal_t* vel) {
   decimal_t min_vel = kInf;
   decimal_t max_acc_normal = 0.0;
+  // bug？应该是不超过向心加速度约束的最大速度
   for (auto& v : vehicle_vec) {
     auto state = v.state();
     auto acc_normal = fabs(state.curvature) * pow(state.velocity, 2);
@@ -516,15 +544,18 @@ ErrorType BehaviorPlanner::GetDesiredVelocityOfTrajectory(
   *vel = min_vel;
   return kSuccess;
 }
-
+// 输入参数 semantic_vehicle_set 包含了所有车辆，主车也在内
+// 使用IDM和纯跟踪前向仿真，如果碰撞则返回 error
 ErrorType BehaviorPlanner::MultiAgentSimForward(
     const int ego_id, const common::SemanticVehicleSet& semantic_vehicle_set,
-    vec_E<common::Vehicle>* traj,
+    vec_E<common::Vehicle>* traj, // 主车的轨迹
     std::unordered_map<int, vec_E<common::Vehicle>>* surround_trajs) {
   traj->clear();
+  // 主车当前状态
   traj->push_back(semantic_vehicle_set.semantic_vehicles.at(ego_id).vehicle);
 
   surround_trajs->clear();
+  // push进主车周围车辆的当前状态
   for (const auto v : semantic_vehicle_set.semantic_vehicles) {
     if (v.first == ego_id) continue;
     surround_trajs->insert(std::pair<int, vec_E<common::Vehicle>>(
@@ -726,6 +757,7 @@ ErrorType BehaviorPlanner::ConstructLaneFromSamples(
 
 ErrorType BehaviorPlanner::JudgeBehaviorByLaneId(
     const int ego_lane_id_by_pos, LateralBehavior* behavior_by_lane_id) {
+  // 当前帧 ego lane 和 上一帧 ego lane 一致：LaneKeep
   if (ego_lane_id_by_pos == ego_lane_id_) {
     *behavior_by_lane_id = common::LateralBehavior::kLaneKeeping;
     return kSuccess;
@@ -737,19 +769,19 @@ ErrorType BehaviorPlanner::JudgeBehaviorByLaneId(
                           potential_lcl_lane_ids_.end(), ego_lane_id_by_pos);
   auto it_lcr = std::find(potential_lcr_lane_ids_.begin(),
                           potential_lcr_lane_ids_.end(), ego_lane_id_by_pos);
-
+  // 当前帧 ego lane 在 上一帧LaneKeep的车道集中：LaneKeep
   if (it != potential_lk_lane_ids_.end()) {
     // ~ if routing information is available, here
     // ~ we still need to check whether the change is consist with the
     *behavior_by_lane_id = common::LateralBehavior::kLaneKeeping;
     return kSuccess;
   }
-
+  // 当前帧 ego lane 在 上一帧kLaneChangeLeft的车道集中：kLaneChangeLeft
   if (it_lcl != potential_lcl_lane_ids_.end()) {
     *behavior_by_lane_id = common::LateralBehavior::kLaneChangeLeft;
     return kSuccess;
   }
-
+  // 当前帧 ego lane 在 上一帧LaneChangeRight的车道集中：LaneChangeRight
   if (it_lcr != potential_lcr_lane_ids_.end()) {
     *behavior_by_lane_id = common::LateralBehavior::kLaneChangeRight;
     return kSuccess;
@@ -761,6 +793,8 @@ ErrorType BehaviorPlanner::JudgeBehaviorByLaneId(
 
 ErrorType BehaviorPlanner::UpdateEgoBehavior(
     const LateralBehavior& behavior_by_lane_id) {
+  // 在第一次计算时， behavior_ 的值默认构造的值 （匀速 直行）
+  // 在以后的计算中，才是计算得到的行为决策结果
   if (behavior_.lat_behavior == common::LateralBehavior::kLaneKeeping) {
     if (behavior_by_lane_id == common::LateralBehavior::kLaneKeeping) {
       // ~ lane keeping
@@ -775,16 +809,24 @@ ErrorType BehaviorPlanner::UpdateEgoBehavior(
              common::LateralBehavior::kLaneChangeLeft) {
     if (behavior_by_lane_id == common::LateralBehavior::kLaneKeeping) {
       // ~ still in the course of lane changing
+    // 主车还在原车道，尚未完成换道
+    // behavior_状态不变，主车仍需要继续完成向左变道
     } else if (behavior_by_lane_id ==
                common::LateralBehavior::kLaneChangeLeft) {
       // ~ lane change complete
+      // behavior_by_lane_id == common::LateralBehavior::kLaneChangeLef 表示当前帧主车的最近车道，已经变成了目标车道
+      // 可以认为换道完成
+      // 换道完成
       behavior_.lat_behavior = common::LateralBehavior::kLaneKeeping;
+      // 换道完成，可以相应Hmi的操作了
       lock_to_hmi_ = false;
     } else if (behavior_by_lane_id == common::LateralBehavior::kUndefined) {
       // ~ lane id jumping in lane change, cancel lane change
+      // 换道过发生非预期状况（车道ID跳变），回到车道保持状态
       behavior_.lat_behavior = common::LateralBehavior::kLaneKeeping;
       lock_to_hmi_ = false;
     } else {
+      // 期望 向左变道，车辆却跑到了右侧车道，非预期行为
       // ~ wrong behavior
       behavior_.lat_behavior = common::LateralBehavior::kUndefined;
       lock_to_hmi_ = false;
@@ -828,8 +870,10 @@ ErrorType BehaviorPlanner::GetPotentialLaneIds(
   if (beh == common::LateralBehavior::kUndefined ||
       beh == common::LateralBehavior::kLaneKeeping) {
     map_itf_->GetChildLaneIds(source_lane_id, candidate_lane_ids);
+    // 这里也应该把 source_lane_id 放进 candidate_lane_ids 吧
   } else if (beh == common::LateralBehavior::kLaneChangeLeft) {
     int l_lane_id;
+    // 计算左侧车道：是否有左侧车道 ，且允许左侧变道
     if (map_itf_->GetLeftLaneId(source_lane_id, &l_lane_id) == kSuccess) {
       map_itf_->GetChildLaneIds(l_lane_id, candidate_lane_ids);
       candidate_lane_ids->push_back(l_lane_id);

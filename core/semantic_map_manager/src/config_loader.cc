@@ -16,6 +16,7 @@ ErrorType ConfigLoader::ParseAgentConfig(AgentConfigInfo *p_agent_config) {
   for (int i = 0; i < num; ++i) {
     Json agent = agent_config_json["info"][i];
     if (agent["id"].get<int>() != ego_id_) continue;
+    // 得到主车的配置参数
     p_agent_config->obstacle_map_meta_info = common::GridMapMetaInfo(
         agent["obstacle_map_meta_info"]["width"].get<double>(),       // 1000
         agent["obstacle_map_meta_info"]["height"].get<double>(),      // 1000
@@ -23,12 +24,12 @@ ErrorType ConfigLoader::ParseAgentConfig(AgentConfigInfo *p_agent_config) {
     p_agent_config->surrounding_search_radius =
         agent["surrounding_search_radius"].get<double>();  // 150.0
     p_agent_config->enable_openloop_prediction =
-        agent["enable_openloop_prediction"].get<bool>();
-    if (agent.count("enable_tracking_noise")) {
+        agent["enable_openloop_prediction"].get<bool>();  // ture
+    if (agent.count("enable_tracking_noise")) {  // 0
       p_agent_config->enable_tracking_noise =
           agent["enable_tracking_noise"].get<bool>();
     }
-    if (agent.count("enable_log")) {
+    if (agent.count("enable_log")) {  // 0
       p_agent_config->enable_log = agent["enable_log"].get<bool>();
       p_agent_config->log_file = agent["log_file"].get<std::string>();
     }

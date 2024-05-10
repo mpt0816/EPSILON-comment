@@ -129,16 +129,20 @@ class DcpTree {
   std::vector<DcpAction> AppendActionSequence(
       const std::vector<DcpAction>& seq_in, const DcpAction& a,
       const int& n) const;
-  // 设置DCP Tree的深度为 5
+  // DCP Tree的深度，默认深度为 5
   int tree_height_ = 5;
-  // 设置每个 action 的作用时间为 1s
-  // so，整个决策的时域为 5s
+  // 每层树的节点 (action) 的持续作用时间，默认为 1s
   decimal_t layer_time_ = 1.0;
+  // 最后一层节点的持续作用时间，
+  // 作用：增加预测决策的时域，而不增加树的深度
   decimal_t last_layer_time_ = 1.0;
-  // 当前决策帧正在进行的 action, (上一帧的决策)
+  // 当前决策帧正在进行的 action, (上一帧的决策)，保证前后决策的连续性
   // 是DCP Tree 的根节点
   DcpAction ongoing_action_;
   // 外层为episode，内层为每一幕episode的决策序列
+  // type std::vector<DcpAction> ActionSequence
+  // std::vector<ActionSequence> action_script_;
+  // 以上做法语义更加明确
   std::vector<std::vector<DcpAction>> action_script_;
 };
 }  // namespace planning

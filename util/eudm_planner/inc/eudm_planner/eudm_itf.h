@@ -20,8 +20,12 @@ struct LaneChangeInfo {
 };
 
 struct Task {
+  // 是否自动驾驶
   bool is_under_ctrl = false;
+  // 用户期望速度
   double user_desired_vel;
+  // 用户期望的换道行为
+  // -1:向左变道， 0:直行， 1:向右变道
   int user_perferred_behavior = 0;
   LaneChangeInfo lc_info;
 };

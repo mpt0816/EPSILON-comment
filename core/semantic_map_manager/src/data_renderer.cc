@@ -9,14 +9,16 @@ namespace semantic_map_manager {
 
 DataRenderer::DataRenderer(SemanticMapManager *smm_ptr)
     : p_semantic_map_manager_(smm_ptr) {
-  ego_id_ = p_semantic_map_manager_->ego_id();
+  ego_id_ = p_semantic_map_manager_->ego_id(); // 0
   obstacle_map_info_ =
       p_semantic_map_manager_->agent_config_info().obstacle_map_meta_info;
+  // 配置为 150
   surrounding_search_radius_ =
       p_semantic_map_manager_->agent_config_info().surrounding_search_radius;
-
+  // 1000 X 1000
   std::array<int, 2> map_size = {
       {obstacle_map_info_.height, obstacle_map_info_.width}};
+  // 0.52 X 0.2
   std::array<decimal_t, 2> map_resl = {
       {obstacle_map_info_.resolution, obstacle_map_info_.resolution}};
   std::array<std::string, 2> map_name = {{"height", "width"}};
@@ -35,9 +37,10 @@ ErrorType DataRenderer::Render(const double &time_stamp,
   GetEgoVehicle(vehicle_set);  // ~ Must update ego vehicle first
   GetObstacleMap(obstacle_set);
   GetWholeLaneNet(lane_net);   // 所有的车道
-  GetSurroundingLaneNet(lane_net);  // 通过 kdTree，在主车搜索范围内的车道以及车道线上的点
-  GetSurroundingVehicles(vehicle_set);  // 主车搜索范围内的车辆
-
+  GetSurroundingLaneNet(lane_net);  // 通过 kdTree，搜索主车一定范围内的车道
+  GetSurroundingVehicles(vehicle_set);  // 搜索主车 150m 半径范围内的车辆，作为 Sounding Vehicles
+  
+  // 默认配置是没有扰动
   if (p_semantic_map_manager_->agent_config_info().enable_tracking_noise) {
     // 对周围车辆增加位置、航向扰动
     InjectObservationNoise();
@@ -59,7 +62,7 @@ ErrorType DataRenderer::InjectObservationNoise() {
   // * update uncertain vehicle ids if necessary
   if (ego_id_ != 0) return kSuccess;
   cnt_random_++;
-
+  // 没运行10次，对其中三辆车辆增加噪声
   if (cnt_random_ == 10) {
     uncertain_vehicle_ids_.clear();
     const decimal_t angle_noise_std = 0.22;
@@ -76,7 +79,7 @@ ErrorType DataRenderer::InjectObservationNoise() {
     // 使周围车辆在vector中随机排列
     std::shuffle(surrounding_ids.begin(), surrounding_ids.end(),
                  random_engine_);
-    // 只对三个周围车辆加上噪声
+    // 只对三个车辆加上噪声
     std::vector<int> sampled_ids;
     for (int i = 0; i < 3 && i < surrounding_ids.size(); i++) {
       sampled_ids.push_back(surrounding_ids[i]);

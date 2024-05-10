@@ -29,7 +29,7 @@ void RosAdapter::ArenaInfoCallback(
     private_callback_fn_(*p_smm_);
   }
 }
-
+// 静态障碍物和车道
 void RosAdapter::ArenaInfoStaticCallback(
     const vehicle_msgs::ArenaInfoStatic::ConstPtr& msg) {
   ros::Time time_stamp;
@@ -37,7 +37,7 @@ void RosAdapter::ArenaInfoStaticCallback(
       *msg, &time_stamp, &lane_net_, &obstacle_set_);
   get_arena_info_static_ = true;
 }
-
+// 动态障碍物
 void RosAdapter::ArenaInfoDynamicCallback(
     const vehicle_msgs::ArenaInfoDynamic::ConstPtr& msg) {
   ros::Time time_stamp;

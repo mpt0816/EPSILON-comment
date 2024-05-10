@@ -43,24 +43,26 @@ int main(int argc, char** argv) {
   ros::NodeHandle nh("~");
   
   // 从ros参数空间获取配置参数
+  // 下面的配置可以从 launch/test_ssc_with_mpdm_ros.launch得到
   int ego_id;
-  if (!nh.getParam("ego_id", ego_id)) {
+  if (!nh.getParam("ego_id", ego_id)) {  // 0
     ROS_ERROR("Failed to get param %d", ego_id);
     assert(false);
   }
+  // core/playgrounds/highway_v1.0/agent_config.json
   std::string agent_config_path;
   if (!nh.getParam("agent_config_path", agent_config_path)) {
     ROS_ERROR("Failed to get param agent_config_path %s",
               agent_config_path.c_str());
     assert(false);
   }
-
+  // util/eudm_planner/config/eudm_config.pb.txt
   std::string bp_config_path;
   if (!nh.getParam("bp_config_path", bp_config_path)) {
     ROS_ERROR("Failed to get param bp_config_path %s", bp_config_path.c_str());
     assert(false);
   }
-
+  // util/ssc_planner/config/ssc_config.pb.txt
   std::string ssc_config_path;
   if (!nh.getParam("ssc_config_path", ssc_config_path)) {
     ROS_ERROR("Failed to get param ssc_config_path %s",
@@ -72,6 +74,7 @@ int main(int argc, char** argv) {
   semantic_map_manager::SemanticMapManager semantic_map_manager(
       ego_id, agent_config_path);
   semantic_map_manager::RosAdapter smm_ros_adapter(nh, &semantic_map_manager);
+  // 绑定回调，将更新的 语义地图 push到 EUDM Planner
   smm_ros_adapter.BindMapUpdateCallback(SemanticMapUpdateCallback);
 
   double desired_vel;
@@ -79,11 +82,12 @@ int main(int argc, char** argv) {
   // Declare bp
   p_bp_server_ = new planning::EudmPlannerServer(nh, bp_work_rate, ego_id);
   p_bp_server_->set_user_desired_velocity(desired_vel);
+  // 绑定回调函数，当 EUDM 计算出 behavior 后，通过语义地图更新，传递给 ssc planner
   p_bp_server_->BindBehaviorUpdateCallback(BehaviorUpdateCallback);
 
   p_ssc_server_ =
       new planning::SscPlannerServer(nh, ssc_planner_work_rate, ego_id);
-
+  // 传入 EUDM 和 SSC Planner的参数
   p_bp_server_->Init(bp_config_path);
   p_ssc_server_->Init(ssc_config_path);
   smm_ros_adapter.Init();

@@ -275,9 +275,9 @@ class SemanticMapManager {
   ErrorType GetLaneBySampledPoints(const vec_Vecf<2> &samples,
                                    const bool &is_high_quality,
                                    common::Lane *lane) const;
-
+  // ros time，sec，时间戳
   double time_stamp_{0.0};
-
+  // 预测时域和步长
   decimal_t pred_time_ = 5.0;
   decimal_t pred_step_ = 0.2;
 
@@ -298,11 +298,12 @@ class SemanticMapManager {
   std::string agent_config_path_;
   AgentConfigInfo agent_config_info_;
   bool use_right_hand_axis_ = true;
-
+  // 主车状态信息
   common::Vehicle ego_vehicle_;
   GridMap2D obstacle_map_;
   std::set<std::array<decimal_t, 2>> obstacle_grids_;
   // * surrounding vehicles is constructed by radius
+  // 主车 150m 半径圆内的车辆
   common::VehicleSet surrounding_vehicles_;
   // * semantic version of surrounding vehicles
   common::SemanticVehicleSet semantic_surrounding_vehicles_;
@@ -310,11 +311,13 @@ class SemanticMapManager {
   // * key vehicles is a subset of surrounding vehicle
   common::VehicleSet key_vehicles_;
   // * key vehicles with semantics
+  // 挑选出来的会和主车发生交互的车辆，EUDM会对这里的每个车辆进行前向仿真
   common::SemanticVehicleSet semantic_key_vehicles_;
   std::vector<int> key_vehicle_ids_;
   std::vector<int> uncertain_vehicle_ids_;
-
+  // 上游发布的所有车道
   common::LaneNet whole_lane_net_;
+  // 从所有车道中，挑选出来的主车一定范围内的车道
   common::LaneNet surrounding_lane_net_;
   common::SemanticLaneSet semantic_lane_set_;
   common::SemanticBehavior ego_behavior_;

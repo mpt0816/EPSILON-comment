@@ -47,7 +47,8 @@ class EudmManager {
     bool completed = true;
     // 是否允许在合适的时机触发变道
     bool trigger_when_appropriate = false;
-    decimal_t trigger_time = 0.0;  // 变道触发时间
+    decimal_t trigger_time = 0.0;  
+    // 期望变道触发时间
     decimal_t desired_operation_time = 0.0;
     int ego_lane_id = 0;
     LateralBehavior lat = LateralBehavior::kLaneKeeping;  // 变道行为
@@ -130,6 +131,7 @@ class EudmManager {
   decimal_t work_rate_{20.0};
 
   int ego_lane_id_;
+  // 上一帧计算得到的决策结果
   ReplanningContext context_;
   Snapshot last_snapshot_;
   planning::eudm::Task last_task_;

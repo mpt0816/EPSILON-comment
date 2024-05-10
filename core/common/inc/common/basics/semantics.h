@@ -652,19 +652,19 @@ struct LaneNet {
 };
 
 struct SemanticLane {
-  int id;
-  int dir;
+  int id;  // 车道ID
+  int dir; // 车道方向
 
-  std::vector<int> child_id;
-  std::vector<int> father_id;
+  std::vector<int> child_id;  // 后继车道ID
+  std::vector<int> father_id; // 前序车道ID
 
-  int l_lane_id;
-  bool l_change_avbl;
-  int r_lane_id;
-  bool r_change_avbl;
+  int l_lane_id;  // 左侧车道ID
+  bool l_change_avbl; // 是否可以向左变道
+  int r_lane_id; // 右侧车道ID
+  bool r_change_avbl;  // 是否可以向右变道
 
-  std::string behavior;
-  decimal_t length;
+  std::string behavior; // 没看到说明，还不知道是什么，msg定义中就有，地图定义的
+  decimal_t length;  // 车道长度
 
   Lane lane;
 };

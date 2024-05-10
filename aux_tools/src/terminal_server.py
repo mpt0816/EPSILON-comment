@@ -293,18 +293,21 @@ def handle_keyboard_event():
                 joy.buttons[1] = 1
                 joy_pub.publish(joy)
             elif event.key == pg.K_q:
+                ## 切换 左侧是否可以换道的状态
                 msg = 'Agent {}: Toggle left lc feasible state'.format(
                     agent_id)
                 print(msg)
                 joy.buttons[4] = 1
                 joy_pub.publish(joy)
             elif event.key == pg.K_e:
+                ## 切换 右侧是否可以换道的状态
                 msg = 'Agent {}: Toggle right lc feasible state'.format(
                     agent_id)
                 print(msg)
                 joy.buttons[5] = 1
                 joy_pub.publish(joy)
             elif event.key == pg.K_r:
+                ## 切换 自动驾驶状态
                 msg = 'Agent {}: Toggle autonomous mode'.format(agent_id)
                 print(msg)
                 joy.buttons[6] = 1
